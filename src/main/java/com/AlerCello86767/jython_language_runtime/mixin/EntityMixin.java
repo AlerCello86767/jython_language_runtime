@@ -24,13 +24,16 @@ public abstract class EntityMixin {
     @Inject(method = "startRiding(Lnet/minecraft/world/entity/Entity;ZZ)Z", at = @At("RETURN"))
     private void pyModAfterStartRiding(Entity vehicle, boolean force, boolean riders,
                                        CallbackInfoReturnable<Boolean> cir) {
-        if (Boolean.TRUE.equals(cir.getReturnValue())) {
+        if (Boolean.TRUE.equals(cir.getReturnValue()) && GameEvents.hasStartRidingHandlers()) {
             GameEvents.fireStartRiding((Entity) (Object) this, vehicle);
         }
     }
 
     @Inject(method = "removeVehicle", at = @At("HEAD"))
     private void pyModOnRemoveVehicle(CallbackInfo ci) {
+        if (!GameEvents.hasStopRidingHandlers()) {
+            return;
+        }
         Entity vehicle = ((Entity) (Object) this).getVehicle();
         if (vehicle != null) {
             GameEvents.fireStopRiding((Entity) (Object) this, vehicle);

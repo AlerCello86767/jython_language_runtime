@@ -2,7 +2,7 @@ package com.AlerCello86767.jython_language_runtime.host;
 
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.InteractionResult;
@@ -33,6 +33,10 @@ import net.minecraft.world.level.block.state.BlockState;
 public class PythonBlock extends Block implements EntityBlock {
     private final PyObject behaviorClass;
     private final boolean ticking;
+    /** H2：行为类是否真的实现了 {@code tick}（构造期探测一次）。未实现就不挂 ticker，避免每 tick 空跑。 */
+    private final boolean hasTick;
+    /** H11：行为类是否实现了任何方块实体钩子；都没有就不创建 Python 对象（纯占位/纯容器方块）。 */
+    private final boolean hasHooks;
     private final boolean sync;
     private final int containerSize;
     private BlockEntityType<?> entityType;
@@ -42,6 +46,9 @@ public class PythonBlock extends Block implements EntityBlock {
         super(properties);
         this.behaviorClass = behaviorClass;
         this.ticking = ticking;
+        this.hasTick = behaviorClass != null && behaviorClass.__findattr__("tick") != null;
+        this.hasHooks = behaviorClass != null
+                && PyHandles.implementsAny(behaviorClass, "tick", "saveAdditional", "loadAdditional", "use");
         this.sync = sync;
         this.containerSize = containerSize;
     }
@@ -68,12 +75,13 @@ public class PythonBlock extends Block implements EntityBlock {
     protected InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos, Player player,
                                                BlockHitResult hit) {
         BlockEntity blockEntity = level.getBlockEntity(pos);
-        PyObject target = blockEntity instanceof PythonBlockEntity pythonBlockEntity
-                ? pythonBlockEntity.behavior()
-                : null;
-        if (target != null && Boolean.TRUE.equals(
-                PyForwarder.forward(target, "use", Boolean.class, state, level, pos, player, hit))) {
-            return InteractionResult.SUCCESS;
+        // H1：复用方块实体行为实例的方法句柄缓存，右键不再每次做 __findattr__
+        if (blockEntity instanceof PythonBlockEntity pythonBlockEntity) {
+            PyHandles pythonHandles = pythonBlockEntity.handles();
+            if (pythonHandles != null && Boolean.TRUE.equals(
+                    pythonHandles.forward("use", Boolean.class, state, level, pos, player, hit))) {
+                return InteractionResult.SUCCESS;
+            }
         }
         return super.useWithoutItem(state, level, pos, player, hit);
     }
@@ -83,17 +91,19 @@ public class PythonBlock extends Block implements EntityBlock {
         if (behaviorClass == null) {
             return null;
         }
-        return new PythonBlockEntity(entityType, pos, state, behaviorClass.__call__(), sync, containerSize);
+        // H11：把「类 + 是否带钩子」交给方块实体，由它惰性实例化；
+        // 没有任何钩子的方块（纯占位/纯容器）永远不会创建 Python 对象
+        return new PythonBlockEntity(entityType, pos, state, behaviorClass, hasHooks, sync, containerSize);
     }
 
     /**
      * 双端都会拿到 ticker，Python 侧可用 {@code level.isClientSide()} 自行分流；
-     * {@code ticking} 为 false 或没有行为对象时返回 null（该方块不参与 tick）。
+     * {@code ticking} 为 false、没有行为对象、或行为类未实现 {@code tick} 时返回 null（该方块不参与 tick）。
      */
     @Override
     public <T extends BlockEntity> BlockEntityTicker<T> getTicker(Level level, BlockState state,
                                                                   BlockEntityType<T> type) {
-        if (!ticking || behaviorClass == null) {
+        if (!ticking || behaviorClass == null || !hasTick) {
             return null;
         }
         return (tickLevel, tickPos, tickState, blockEntity) -> {

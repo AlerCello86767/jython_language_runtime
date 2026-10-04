@@ -2,7 +2,7 @@ package com.AlerCello86767.jython_language_runtime.host;
 
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.InteractionHand;
@@ -29,11 +29,17 @@ import net.minecraft.world.phys.Vec3;
  * 只有 {@code hurtServer} / {@code interact} / {@code getMainArm} 是「Python 优先、返回 None 才回退」。
  */
 public class PythonEntity extends LivingEntity {
-    private final PyObject behavior;
+    /** H11：行为类一个钩子都没实现时为 null——不为每个实体创建 Python 对象，各钩子直接走原版。 */
+    private final PyHandles handles;
 
     public PythonEntity(EntityType<? extends PythonEntity> type, Level level, PyObject behavior) {
         super(type, level);
-        this.behavior = behavior;
+        // H1：构造期预解析全部钩子（每个实体一个行为实例）
+        this.handles = behavior == null ? null : new PyHandles(behavior);
+        if (handles != null) {
+            handles.preload("tick", "hurtServer", "interact", "getMainArm",
+                    "readAdditionalSaveData", "addAdditionalSaveData");
+        }
     }
 
     @Override
@@ -73,13 +79,13 @@ public class PythonEntity extends LivingEntity {
         call("addAdditionalSaveData", output);
     }
 
-    // ---------- 转发内核（调用与返回值约定见 PyForwarder） ----------
+    // ---------- 转发内核（调用与返回值约定见 PyHandles） ----------
 
     private <T> T forward(String name, Class<T> type, Object... args) {
-        return PyForwarder.forward(behavior, name, type, args);
+        return handles == null ? null : handles.forward(name, type, args);
     }
 
     private boolean call(String name, Object... args) {
-        return PyForwarder.call(behavior, name, args);
+        return handles != null && handles.call(name, args);
     }
 }

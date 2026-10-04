@@ -2,7 +2,7 @@ package com.AlerCello86767.jython_language_runtime.host;
 
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -32,11 +32,18 @@ import net.minecraft.world.level.block.state.BlockState;
  * <p>已知语义约束：{@code inventoryTick} 在 26.1 只在服务端（ServerLevel）被调用。
  */
 public class DelegatingItem extends Item {
-    private final PyObject handler;
+    private final PyHandles handles;
 
     public DelegatingItem(Item.Properties properties, PyObject handler) {
         super(properties);
-        this.handler = handler;
+        // H1/H3：构造期一次性预解析全部可重写方法。物品每种只建一个宿主，
+        // 之后每个高频钩子（inventoryTick / onUseTick …）只剩一次 map 查找；
+        // 未实现的方法同样被缓存，不会再跨界。
+        this.handles = new PyHandles(handler);
+        this.handles.preload("use", "useOn", "interactLivingEntity", "finishUsingItem",
+                "releaseUsing", "getUseDuration", "getUseAnimation", "onUseTick",
+                "hurtEnemy", "postHurtEnemy", "mineBlock", "getDestroySpeed",
+                "inventoryTick", "onCraftedBy", "isFoil");
     }
 
     // ---------- 右键使用 ----------
@@ -145,13 +152,13 @@ public class DelegatingItem extends Item {
         return result != null ? result : super.isFoil(stack);
     }
 
-    // ---------- 转发内核（调用与返回值约定见 PyForwarder） ----------
+    // ---------- 转发内核（调用与返回值约定见 PyHandles） ----------
 
     private <T> T forward(String name, Class<T> type, Object... args) {
-        return PyForwarder.forward(handler, name, type, args);
+        return handles.forward(name, type, args);
     }
 
     private boolean call(String name, Object... args) {
-        return PyForwarder.call(handler, name, args);
+        return handles.call(name, args);
     }
 }

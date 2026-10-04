@@ -4,7 +4,7 @@ import java.util.Locale;
 
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.fabricmc.fabric.api.client.sound.v1.FabricSoundInstance;
 import net.minecraft.client.resources.sounds.AbstractSoundInstance;
@@ -25,11 +25,17 @@ import net.minecraft.sounds.SoundSource;
  * 不是「自定义音频流」那一面。Python 没实现的方法一律回退 {@code super}。
  */
 public class PythonSoundInstance extends AbstractSoundInstance implements FabricSoundInstance {
-    private final PyObject behavior;
+    /** behavior 可为 null（纯用默认值播一条音效）；此时不建句柄缓存。 */
+    private final PyHandles handles;
 
     public PythonSoundInstance(Identifier soundId, SoundSource source, PyObject behavior) {
         super(soundId, source, SoundInstance.createUnseededRandom());
-        this.behavior = behavior;
+        this.handles = behavior == null ? null : new PyHandles(behavior);
+        if (handles != null) {
+            // H1：构造期预解析全部取值方法
+            handles.preload("getVolume", "getPitch", "isLooping", "isRelative", "getDelay",
+                    "getX", "getY", "getZ", "canStartSilent", "canPlaySound", "getAttenuation");
+        }
     }
 
     @Override
@@ -108,6 +114,6 @@ public class PythonSoundInstance extends AbstractSoundInstance implements Fabric
 
     /** behavior 可为 null（纯用默认值播一条音效）；Python 未实现该方法时返回 null 由调用方回退 super。 */
     private <T> T forward(String name, Class<T> type) {
-        return behavior == null ? null : PyForwarder.forward(behavior, name, type);
+        return handles == null ? null : handles.forward(name, type);
     }
 }

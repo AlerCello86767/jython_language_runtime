@@ -30,13 +30,16 @@ public abstract class FishingHookMixin {
             method = "<init>(Lnet/minecraft/world/entity/player/Player;Lnet/minecraft/world/level/Level;II)V",
             at = @At("TAIL"))
     private void pyModOnCast(Player player, Level level, int luck, int lure, CallbackInfo ci) {
-        if (!level.isClientSide()) {
+        if (GameEvents.hasFishCastHandlers() && !level.isClientSide()) {
             GameEvents.fireFishCast(player, luck, lure);
         }
     }
 
     @Inject(method = "retrieve", at = @At("HEAD"))
     private void pyModOnRetrieve(ItemStack rod, CallbackInfoReturnable<Integer> cir) {
+        if (!GameEvents.hasFishRetrieveHandlers()) {
+            return;
+        }
         FishingHook self = (FishingHook) (Object) this;
         if (self.level().isClientSide()) {
             return;

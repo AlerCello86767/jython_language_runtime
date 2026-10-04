@@ -583,4 +583,21 @@ public final class GameEvents {
             handler.handle(clockId, totalTicks);
         }
     }
+
+    // ---------- H9：mixin 用的「有无监听者」快速开关 ----------
+    // 下列事件由 mixin 注入原版热路径（拾取 / 跳跃 / 丢弃 / 放置 / 钓竿 / 切槽 / 天气 / 时间 / 骑乘）。
+    // 没有监听者时让 mixin 直接返回，连参数整理与双端判定都不做。
+    // 注册只发生在 init 窗口，因此运行期读这些布尔值是稳定的。
+
+    public static boolean hasItemPickupHandlers() { return !ITEM_PICKUP_HANDLERS.isEmpty(); }
+    public static boolean hasItemDropHandlers() { return !ITEM_DROP_HANDLERS.isEmpty(); }
+    public static boolean hasPlayerJumpHandlers() { return !PLAYER_JUMP_HANDLERS.isEmpty(); }
+    public static boolean hasStartRidingHandlers() { return !START_RIDING_HANDLERS.isEmpty(); }
+    public static boolean hasStopRidingHandlers() { return !STOP_RIDING_HANDLERS.isEmpty(); }
+    public static boolean hasBlockPlaceHandlers() { return !BLOCK_PLACE_HANDLERS.isEmpty(); }
+    public static boolean hasFishCastHandlers() { return !FISH_CAST_HANDLERS.isEmpty(); }
+    public static boolean hasFishRetrieveHandlers() { return !FISH_RETRIEVE_HANDLERS.isEmpty(); }
+    public static boolean hasHeldSlotChangeHandlers() { return !HELD_SLOT_HANDLERS.isEmpty(); }
+    public static boolean hasWeatherChangeHandlers() { return !WEATHER_HANDLERS.isEmpty(); }
+    public static boolean hasTimeChangeHandlers() { return !TIME_HANDLERS.isEmpty(); }
 }

@@ -2,7 +2,7 @@ package com.AlerCello86767.jython_language_runtime.host;
 
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -36,13 +36,52 @@ import net.minecraft.world.level.storage.ValueOutput;
  * 读 {@code input.getIntOr("k", 0)} / {@code getStringOr} / {@code getBooleanOr} / {@code getDoubleOr} …
  */
 public class PythonBlockEntity extends BlockEntity {
-    private final PyObject behavior;
+    private final PyObject behaviorClass;
+    private final boolean hasHooks;
     private final boolean sync;
     private final SimpleContainer container;
+    /** H8：上次同步出去的 tag，用来跳过「内容没变」的重复同步包。 */
+    private CompoundTag lastSynced;
+    /** H11：行为实例与句柄缓存都惰性创建；{@code hasHooks} 为 false 时永不创建。 */
+    private PyObject behavior;
+    private PyHandles handles;
 
-    /** 该方块实体对应的 Python 实例：方块级钩子（如右键）复用它，不再重复实例化。 */
+    /** 该方块实体对应的 Python 实例（首次访问时惰性创建）；无 Python 行为时为 {@code null}。 */
     public PyObject behavior() {
+        handlesOrNull();
         return behavior;
+    }
+
+    /**
+     * 该行为实例的方法句柄缓存；无 Python 行为时为 {@code null}。
+     *
+     * <p>方块级钩子（如右键 use）复用它，避免每次调用都做 __findattr__。
+     */
+    public PyHandles handles() {
+        return handlesOrNull();
+    }
+
+    /** 惰性实例化行为对象并建句柄缓存；{@code hasHooks} 为 false 时永不实例化。 */
+    private PyHandles handlesOrNull() {
+        PyHandles current = handles;
+        if (current != null) {
+            return current;
+        }
+        if (!hasHooks) {
+            return null;
+        }
+        return createHandles();
+    }
+
+    private synchronized PyHandles createHandles() {
+        if (handles == null) {
+            PyObject instance = behaviorClass.__call__();
+            PyHandles created = new PyHandles(instance);
+            created.preload("tick", "saveAdditional", "loadAdditional", "use");
+            behavior = instance;
+            handles = created;
+        }
+        return handles;
     }
 
     /**
@@ -53,17 +92,22 @@ public class PythonBlockEntity extends BlockEntity {
         return container;
     }
 
+    /**
+     * @param behaviorClass Python 行为类（每个方块实体惰性实例化一份）
+     * @param hasHooks      该行为类是否实现了任何方块实体钩子；false 时永不创建 Python 对象
+     */
     public PythonBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state,
-                             PyObject behavior, boolean sync, int containerSize) {
+                             PyObject behaviorClass, boolean hasHooks, boolean sync, int containerSize) {
         super(type, pos, state);
-        this.behavior = behavior;
+        this.behaviorClass = behaviorClass;
+        this.hasHooks = hasHooks;
         this.sync = sync;
         this.container = new SimpleContainer(containerSize);
     }
 
-    /** 由 {@link PythonBlock#getTicker} 调用。 */
+    /** 由 {@link PythonBlock#getTicker} 调用——只有行为类实现了 tick 才会挂 ticker，故这里必有句柄。 */
     void tickBehavior(Level level, BlockPos pos, BlockState state) {
-        PyForwarder.call(behavior, "tick", this, level, pos, state);
+        handlesOrNull().call("tick", this, level, pos, state);
     }
 
     @Override
@@ -71,27 +115,43 @@ public class PythonBlockEntity extends BlockEntity {
         super.saveAdditional(output);
         // 物品栏由 Java 侧负责存读、不经 Python：ItemStack 的数据结构容易写坏
         ContainerHelper.saveAllItems(output, container.getItems());
-        PyForwarder.call(behavior, "saveAdditional", output);
+        PyHandles current = handlesOrNull();
+        if (current != null) {
+            current.call("saveAdditional", output);
+        }
     }
 
     @Override
     protected void loadAdditional(ValueInput input) {
         super.loadAdditional(input);
         ContainerHelper.loadAllItems(input, container.getItems());
-        PyForwarder.call(behavior, "loadAdditional", input);
+        PyHandles current = handlesOrNull();
+        if (current != null) {
+            current.call("loadAdditional", input);
+        }
     }
 
     /**
      * 数据变更。{@code sync} 打开时额外推一份同步包给追踪该区块的客户端；
      * 关闭时只走原版（服务端标记脏块），适用于纯服务端数据。
+     *
+     * <p><b>H8：</b>不少实现会每 tick 调 {@code setChanged()}，但内容其实没变。
+     * 这里先比较「本次要同步的数据」与上次同步的是否一致，一致就不发包——
+     * 避免把 per-tick 的调用变成 per-tick 的网络包。
      */
     @Override
     public void setChanged() {
         super.setChanged();
         Level current = getLevel();
-        if (sync && current != null && !current.isClientSide()) {
-            current.sendBlockUpdated(getBlockPos(), getBlockState(), getBlockState(), Block.UPDATE_ALL);
+        if (!sync || current == null || current.isClientSide()) {
+            return;
         }
+        CompoundTag tag = saveWithoutMetadata(current.registryAccess());
+        if (tag.equals(lastSynced)) {
+            return;
+        }
+        lastSynced = tag;
+        current.sendBlockUpdated(getBlockPos(), getBlockState(), getBlockState(), Block.UPDATE_ALL);
     }
 
     /**

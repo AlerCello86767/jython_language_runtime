@@ -27,6 +27,9 @@ public abstract class LivingEntityMixin {
     @Inject(method = "drop", at = @At("RETURN"))
     private void pyModAfterDrop(ItemStack stack, boolean randomly, boolean thrownFromHand,
                                 CallbackInfoReturnable<ItemEntity> cir) {
+        if (!GameEvents.hasItemDropHandlers()) {
+            return;
+        }
         ItemEntity dropped = cir.getReturnValue();
         if (dropped != null && (Object) this instanceof Player player
                 && !player.level().isClientSide()) {
@@ -36,6 +39,9 @@ public abstract class LivingEntityMixin {
 
     @Inject(method = "jumpFromGround", at = @At("HEAD"))
     private void pyModOnJump(CallbackInfo ci) {
+        if (!GameEvents.hasPlayerJumpHandlers()) {
+            return;
+        }
         if ((Object) this instanceof Player player && !player.level().isClientSide()) {
             GameEvents.firePlayerJump(player);
         }

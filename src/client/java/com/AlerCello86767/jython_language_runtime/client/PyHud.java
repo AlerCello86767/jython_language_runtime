@@ -69,7 +69,9 @@ public final class PyHud {
      *   <li>{@code anchor} —— {@code first} / {@code last}（默认） / {@code before} / {@code after}</li>
      *   <li>{@code target} —— anchor 为 before/after 时的锚点 id，取值见 {@code VanillaHudElements}
      *       （如 {@code minecraft:hotbar}）</li>
-     *   <li>{@code tick} —— 是否每客户端 tick 重建指令列表，默认 false</li>
+     *   <li>{@code tick} —— 是否每客户端 tick 重建指令列表，默认 false。
+     *       能不开就不开：数据变化时改用 {@link #invalidate(String)} 主动重建；
+     *       确实要每 tick 重建时，Python 侧应复用同一个 {@code UiDraw}（见 {@code UiDraw.reset()}）</li>
      * </ul>
      */
     public static void register(String id, Map<String, Object> options) {

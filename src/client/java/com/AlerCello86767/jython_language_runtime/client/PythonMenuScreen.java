@@ -3,7 +3,7 @@ package com.AlerCello86767.jython_language_runtime.client;
 import org.joml.Matrix3x2fStack;
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 import com.AlerCello86767.jython_language_runtime.host.PythonContainerMenu;
 
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -22,17 +22,19 @@ import net.minecraft.world.entity.player.Inventory;
  * 且 {@code tick()} 是 {@code public final}，每 tick 逻辑只能写在 {@code containerTick()}。
  */
 public class PythonMenuScreen extends AbstractContainerScreen<PythonContainerMenu> {
-    private final PyObject behavior;
+    private final PyHandles handles;
 
     public PythonMenuScreen(PythonContainerMenu menu, Inventory inventory, Component title, PyObject behavior) {
         super(menu, inventory, title);
-        this.behavior = behavior;
+        // H1：一份界面一个行为实例，构造期预解析钩子（draw 是每帧路径）
+        this.handles = new PyHandles(behavior);
+        this.handles.preload("init", "draw", "tick", "removed");
     }
 
     @Override
     protected void init() {
         super.init();
-        PyForwarder.call(behavior, "init", this);
+        handles.call("init", this);
     }
 
     /**
@@ -52,7 +54,7 @@ public class PythonMenuScreen extends AbstractContainerScreen<PythonContainerMen
         Matrix3x2fStack pose = graphics.pose();
         pose.pushMatrix();
         pose.translate(leftPos, topPos);
-        PyObject result = PyForwarder.forward(behavior, "draw", PyObject.class,
+        PyObject result = handles.forward("draw", PyObject.class,
                 mouseX - leftPos, mouseY - topPos, partialTick);
         if (result != null) {
             Object converted = result.__tojava__(UiDraw.class);
@@ -68,12 +70,12 @@ public class PythonMenuScreen extends AbstractContainerScreen<PythonContainerMen
     @Override
     protected void containerTick() {
         super.containerTick();
-        PyForwarder.call(behavior, "tick");
+        handles.call("tick");
     }
 
     @Override
     public void removed() {
         super.removed();
-        PyForwarder.call(behavior, "removed");
+        handles.call("removed");
     }
 }

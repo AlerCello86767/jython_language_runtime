@@ -26,6 +26,9 @@ import net.minecraft.world.level.block.state.BlockState;
 public abstract class BlockItemMixin {
     @Inject(method = "place", at = @At("RETURN"))
     private void pyModAfterPlace(BlockPlaceContext context, CallbackInfoReturnable<InteractionResult> cir) {
+        if (!GameEvents.hasBlockPlaceHandlers()) {
+            return;
+        }
         InteractionResult result = cir.getReturnValue();
         if (result == null || !result.consumesAction()) {
             return;

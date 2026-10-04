@@ -5,7 +5,7 @@ import java.util.Map;
 
 import org.python.core.PyObject;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -35,13 +35,17 @@ import net.minecraft.network.chat.Component;
  * <p>窗口尺寸变化会重调 {@link #init()}，因此控件每次都会重建，Python 的对象状态不应依赖控件实例。
  */
 public class PythonScreen extends Screen {
-    private final PyObject behavior;
+    private final PyHandles handles;
     private final Map<String, AbstractWidget> widgets = new LinkedHashMap<>();
     private Screen parent;
 
     public PythonScreen(Component title, PyObject behavior) {
         super(title);
-        this.behavior = behavior;
+        // H1：一份界面一个行为实例，构造期预解析全部钩子（draw 是每帧路径）
+        this.handles = new PyHandles(behavior);
+        this.handles.preload("init", "draw", "tick", "removed", "isPauseScreen",
+                "onButton", "onText", "onClick", "onRelease", "onDrag", "onScroll",
+                "onKey", "onKeyRelease", "onChar");
     }
 
     /**
@@ -70,7 +74,7 @@ public class PythonScreen extends Screen {
         /** 普通按钮；点击回调 {@code onButton(id)}。 */
         public WidgetBuilder button(String id, int x, int y, int w, int h, String labelKey) {
             Button button = Button.builder(Component.translatable(labelKey),
-                    pressed -> PyForwarder.call(behavior, "onButton", id))
+                    pressed -> handles.call("onButton", id))
                     .bounds(x, y, w, h)
                     .build();
             addRenderableWidget(button);
@@ -83,7 +87,7 @@ public class PythonScreen extends Screen {
             EditBox box = new EditBox(getFont(), x, y, w, h, Component.empty());
             box.setMaxLength(maxLength);
             box.setValue(initial == null ? "" : initial);
-            box.setResponder(text -> PyForwarder.call(behavior, "onText", id, text));
+            box.setResponder(text -> handles.call("onText", id, text));
             addRenderableWidget(box);
             widgets.put(id, box);
             return this;
@@ -104,24 +108,24 @@ public class PythonScreen extends Screen {
     @Override
     protected void init() {
         widgets.clear();
-        PyForwarder.call(behavior, "init", new WidgetBuilder());
+        handles.call("init", new WidgetBuilder());
     }
 
     @Override
     public void tick() {
         super.tick();
-        PyForwarder.call(behavior, "tick");
+        handles.call("tick");
     }
 
     @Override
     public void removed() {
         super.removed();
-        PyForwarder.call(behavior, "removed");
+        handles.call("removed");
     }
 
     @Override
     public boolean isPauseScreen() {
-        Boolean value = PyForwarder.forward(behavior, "isPauseScreen", Boolean.class);
+        Boolean value = handles.forward("isPauseScreen", Boolean.class);
         return value != null ? value : super.isPauseScreen();
     }
 
@@ -130,7 +134,7 @@ public class PythonScreen extends Screen {
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         super.extractRenderState(graphics, mouseX, mouseY, partialTick);
-        PyObject result = PyForwarder.forward(behavior, "draw", PyObject.class, mouseX, mouseY, partialTick);
+        PyObject result = handles.forward("draw", PyObject.class, mouseX, mouseY, partialTick);
         if (result != null) {
             Object converted = result.__tojava__(UiDraw.class);
             if (converted instanceof UiDraw ui) {
@@ -143,49 +147,49 @@ public class PythonScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        Boolean handled = PyForwarder.forward(behavior, "onClick", Boolean.class,
+        Boolean handled = handles.forward("onClick", Boolean.class,
                 event.x(), event.y(), event.button(), doubleClick);
         return Boolean.TRUE.equals(handled) || super.mouseClicked(event, doubleClick);
     }
 
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
-        Boolean handled = PyForwarder.forward(behavior, "onRelease", Boolean.class,
+        Boolean handled = handles.forward("onRelease", Boolean.class,
                 event.x(), event.y(), event.button());
         return Boolean.TRUE.equals(handled) || super.mouseReleased(event);
     }
 
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        Boolean handled = PyForwarder.forward(behavior, "onDrag", Boolean.class,
+        Boolean handled = handles.forward("onDrag", Boolean.class,
                 event.x(), event.y(), event.button(), dragX, dragY);
         return Boolean.TRUE.equals(handled) || super.mouseDragged(event, dragX, dragY);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        Boolean handled = PyForwarder.forward(behavior, "onScroll", Boolean.class,
+        Boolean handled = handles.forward("onScroll", Boolean.class,
                 mouseX, mouseY, scrollX, scrollY);
         return Boolean.TRUE.equals(handled) || super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
     }
 
     @Override
     public boolean keyPressed(KeyEvent event) {
-        Boolean handled = PyForwarder.forward(behavior, "onKey", Boolean.class,
+        Boolean handled = handles.forward("onKey", Boolean.class,
                 event.key(), event.scancode(), event.modifiers());
         return Boolean.TRUE.equals(handled) || super.keyPressed(event);
     }
 
     @Override
     public boolean keyReleased(KeyEvent event) {
-        Boolean handled = PyForwarder.forward(behavior, "onKeyRelease", Boolean.class,
+        Boolean handled = handles.forward("onKeyRelease", Boolean.class,
                 event.key(), event.scancode(), event.modifiers());
         return Boolean.TRUE.equals(handled) || super.keyReleased(event);
     }
 
     @Override
     public boolean charTyped(CharacterEvent event) {
-        Boolean handled = PyForwarder.forward(behavior, "onChar", Boolean.class, event.codepoint());
+        Boolean handled = handles.forward("onChar", Boolean.class, event.codepoint());
         return Boolean.TRUE.equals(handled) || super.charTyped(event);
     }
 }

@@ -23,11 +23,12 @@ import com.AlerCello86767.jython_language_runtime.host.PythonEntity;
  * 纹理与几何体由 Python 用 {@link RenderHelper} 决定。
  */
 public class PyEntityRenderer extends EntityRenderer<PythonEntity, EntityRenderState> {
-    private final PyObject behavior;
+    /** H4：渲染句柄在构造期解析一次——{@code submit} 是「每实体每帧」路径，不能再做 __findattr__。 */
+    private final PyObject render;
 
     public PyEntityRenderer(EntityRendererProvider.Context context, PyObject behavior) {
         super(context);
-        this.behavior = behavior;
+        this.render = behavior.__findattr__("render");
     }
 
     @Override
@@ -39,7 +40,6 @@ public class PyEntityRenderer extends EntityRenderer<PythonEntity, EntityRenderS
     public void submit(EntityRenderState state, PoseStack poseStack,
                        SubmitNodeCollector collector, CameraRenderState camera) {
         super.submit(state, poseStack, collector, camera);
-        PyObject render = behavior.__findattr__("render");
         if (render != null) {
             render.__call__(Py.javas2pys(state, poseStack, collector, camera));
         }

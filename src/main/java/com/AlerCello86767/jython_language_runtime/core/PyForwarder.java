@@ -9,6 +9,10 @@ import org.python.core.PyObject;
  * <p>约定：Python 侧定义与 Java 方法同名的函数；未实现、或返回 {@code None} 时视为「未处理」，
  * 由调用方回退 super。返回值必须是 Java 类型，经 {@link PyObject#__tojava__(Class)} 转换，
  * 无法转换（{@link Py#NoConversion}）按未处理对待。
+ *
+ * <p><b>性能：</b>{@link #forward} / {@link #call} 每次调用都会做一次 {@code __findattr__}
+ * 属性查找，适合一次性或低频调用。**每 tick / 每帧**的高频转发请改用 {@link PyHandles}——
+ * 它按行为对象缓存方法句柄（未实现也缓存），把这次查找移出热路径。
  */
 public final class PyForwarder {
     private PyForwarder() {

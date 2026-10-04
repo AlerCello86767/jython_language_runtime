@@ -42,6 +42,26 @@ public final class UiDraw {
         return new UiDraw();
     }
 
+    /**
+     * H5：清空全部指令并返回自身，用于**复用同一个建造器**。
+     *
+     * <p>tick 型 HUD / 每帧界面若每次都 {@code UiDraw.begin()}，会持续产生新对象与闭包。
+     * 把这些指令建在 Python 对象自己的字段上、每次绘制开头 {@code reset()} 即可复用：
+     *
+     * <pre>
+     * def draw(self, mouseX, mouseY, partialTick):
+     *     d = self.cmds.reset()      # self.cmds 在 __init__ 里 = UiDraw.begin()
+     *     d.fill(...)
+     *     return d
+     * </pre>
+     *
+     * <p>回放（{@link #replay}）与重建都在客户端主线程上，因此复用同一实例是安全的。
+     */
+    public UiDraw reset() {
+        ops.clear();
+        return this;
+    }
+
     /** 实心矩形。{@code x,y} 为左上角，{@code w,h} 为宽高。 */
     public UiDraw fill(int x, int y, int w, int h, String color) {
         int argb = Params.asColor(color);

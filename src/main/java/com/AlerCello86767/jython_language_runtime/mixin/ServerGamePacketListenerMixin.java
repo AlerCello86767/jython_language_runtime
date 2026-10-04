@@ -34,6 +34,9 @@ public abstract class ServerGamePacketListenerMixin {
             )
     )
     private void pyModOnHeldSlotChange(ServerboundSetCarriedItemPacket packet, CallbackInfo ci) {
+        if (!GameEvents.hasHeldSlotChangeHandlers()) {
+            return;
+        }
         int oldSlot = this.player.getInventory().getSelectedSlot();
         int newSlot = packet.getSlot();
         if (newSlot != oldSlot) {

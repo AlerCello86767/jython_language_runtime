@@ -26,11 +26,17 @@ public abstract class ItemEntityMixin {
 
     @Inject(method = "playerTouch", at = @At("HEAD"))
     private void pyModBeforeTouch(Player player, CallbackInfo ci) {
+        if (!GameEvents.hasItemPickupHandlers()) {
+            return;
+        }
         pyModCountBeforeTouch = ((ItemEntity) (Object) this).getItem().getCount();
     }
 
     @Inject(method = "playerTouch", at = @At("RETURN"))
     private void pyModAfterTouch(Player player, CallbackInfo ci) {
+        if (!GameEvents.hasItemPickupHandlers()) {
+            return;
+        }
         ItemEntity self = (ItemEntity) (Object) this;
         if (self.level().isClientSide()) {
             return;

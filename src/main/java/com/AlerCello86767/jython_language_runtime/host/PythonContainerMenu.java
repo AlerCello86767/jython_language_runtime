@@ -3,7 +3,7 @@ package com.AlerCello86767.jython_language_runtime.host;
 import org.python.core.PyObject;
 import org.python.core.PyType;
 
-import com.AlerCello86767.jython_language_runtime.core.PyForwarder;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.player.Inventory;
@@ -28,7 +28,7 @@ import net.minecraft.world.item.ItemStack;
 public class PythonContainerMenu extends AbstractContainerMenu {
     private final SimpleContainer container;
     private final Inventory playerInventory;
-    private final PyObject behavior;
+    private final PyHandles handles;
 
     public PythonContainerMenu(MenuType<?> type, int containerId, SimpleContainer container, Inventory playerInventory,
                                PyObject behavior) {
@@ -37,8 +37,11 @@ public class PythonContainerMenu extends AbstractContainerMenu {
         this.playerInventory = playerInventory;
         // 传入的是 Python 类时先实例化：每份菜单持有独立行为对象（与界面同生命周期）。
         // 不能在类上直接调实例方法——Python 2 会报 unbound method
-        this.behavior = behavior instanceof PyType ? behavior.__call__() : behavior;
-        PyForwarder.call(this.behavior, "initSlots", new SlotBuilder());
+        PyObject instance = behavior instanceof PyType ? behavior.__call__() : behavior;
+        // H1：每份菜单独立的行为实例，构造期预解析钩子
+        this.handles = new PyHandles(instance);
+        this.handles.preload("initSlots", "stillValid");
+        this.handles.call("initSlots", new SlotBuilder());
     }
 
     /** 机器自身的物品栏；Python 可通过 {@code onCreateContainer(container)} 预先填充。 */
@@ -75,7 +78,7 @@ public class PythonContainerMenu extends AbstractContainerMenu {
 
     @Override
     public boolean stillValid(Player player) {
-        Boolean value = PyForwarder.forward(behavior, "stillValid", Boolean.class, player);
+        Boolean value = handles.forward("stillValid", Boolean.class, player);
         return value == null || value;
     }
 }

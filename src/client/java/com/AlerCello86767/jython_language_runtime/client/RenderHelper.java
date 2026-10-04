@@ -1,11 +1,15 @@
 package com.AlerCello86767.jython_language_runtime.client;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
+import net.minecraft.resources.Identifier;
 
 import com.AlerCello86767.jython_language_runtime.core.ModIds;
 
@@ -27,22 +31,37 @@ public final class RenderHelper {
     /** 全亮光照值（{@code 0xF000F0}），做无光照演示时用。 */
     public static final int FULL_LIGHT = 15728880;
 
+    // ---------- H4：渲染类型缓存 ----------
+    // 渲染回调是「每实体每帧」路径：原先每次都要 ModIds.parse（正则校验 + 新建 Identifier）
+    // 再取 RenderType。这里按纹理 id 缓存，解析结果与 RenderType 都只算一次。
+    // RenderType 只持有渲染管线与纹理 id、绘制时才解析纹理，可长期持有——
+    // 原版各 EntityRenderer 同样是把 RenderType 存进字段长期复用。
+    private static final Map<String, Identifier> TEXTURES = new ConcurrentHashMap<>();
+    private static final Map<String, RenderType> CUTOUT = new ConcurrentHashMap<>();
+    private static final Map<String, RenderType> TRANSLUCENT = new ConcurrentHashMap<>();
+    private static final Map<String, RenderType> SOLID = new ConcurrentHashMap<>();
+
     private RenderHelper() {
     }
 
     /** 纹理 id → 实体镂空渲染类型（不剔除背面，适合手写几何体）。 */
     public static RenderType entityCutout(String textureId) {
-        return RenderTypes.entityCutout(ModIds.parse(textureId));
+        return CUTOUT.computeIfAbsent(textureId, id -> RenderTypes.entityCutout(texture(id)));
     }
 
     /** 纹理 id → 实体半透明渲染类型（用于发光/透明部位）。 */
     public static RenderType entityTranslucent(String textureId) {
-        return RenderTypes.entityTranslucent(ModIds.parse(textureId));
+        return TRANSLUCENT.computeIfAbsent(textureId, id -> RenderTypes.entityTranslucent(texture(id)));
     }
 
     /** 纹理 id → 实体实心渲染类型。 */
     public static RenderType entitySolid(String textureId) {
-        return RenderTypes.entitySolid(ModIds.parse(textureId));
+        return SOLID.computeIfAbsent(textureId, id -> RenderTypes.entitySolid(texture(id)));
+    }
+
+    /** 纹理 id 只解析一次；必须是全限定 id（运行期回调没有命名空间上下文）。 */
+    private static Identifier texture(String textureId) {
+        return TEXTURES.computeIfAbsent(textureId, ModIds::parse);
     }
 
     /** 向收集器提交一个带纹理的立方体。 */

@@ -20,6 +20,8 @@ public abstract class MinecraftServerMixin {
     @Inject(method = "setWeatherParameters", at = @At("HEAD"))
     private void pyModOnWeatherChange(int clearTime, int weatherTime,
                                       boolean rain, boolean thunder, CallbackInfo ci) {
-        GameEvents.fireWeatherChange((MinecraftServer) (Object) this, rain, thunder);
+        if (GameEvents.hasWeatherChangeHandlers()) {
+            GameEvents.fireWeatherChange((MinecraftServer) (Object) this, rain, thunder);
+        }
     }
 }

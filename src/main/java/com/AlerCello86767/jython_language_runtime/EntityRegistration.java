@@ -8,6 +8,7 @@ import static com.AlerCello86767.jython_language_runtime.core.Params.asMap;
 import static com.AlerCello86767.jython_language_runtime.core.Params.asString;
 
 import com.AlerCello86767.jython_language_runtime.core.ModIds;
+import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 import com.AlerCello86767.jython_language_runtime.host.PythonEntity;
 
 import java.util.Map;
@@ -64,8 +65,11 @@ public final class EntityRegistration {
         float height = asFloat(options.get("height"), 1.8f);
         int trackingRange = asInt(options.get("trackingRange"), 5);
 
+        // H11：行为类一个钩子都没实现时，不必给每个实体创建 Python 对象
+        boolean hasHooks = PyHandles.implementsAny(entityClass, "tick", "hurtServer", "interact",
+                "getMainArm", "readAdditionalSaveData", "addAdditionalSaveData");
         EntityType.Builder<PythonEntity> builder = EntityType.Builder.of(
-                (type, level) -> new PythonEntity(type, level, entityClass.__call__()),
+                (type, level) -> new PythonEntity(type, level, hasHooks ? entityClass.__call__() : null),
                 category);
         builder.sized(width, height);
         builder.clientTrackingRange(trackingRange);

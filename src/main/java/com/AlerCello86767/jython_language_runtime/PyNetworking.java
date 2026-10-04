@@ -2,6 +2,7 @@ package com.AlerCello86767.jython_language_runtime;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.python.core.PyObject;
 import org.slf4j.Logger;
@@ -36,6 +37,16 @@ public final class PyNetworking {
     private static final Map<Identifier, CustomPacketPayload.Type<PyPayload>> S2C_TYPES = new HashMap<>();
     private static final Map<Identifier, PyObject> C2S_HANDLERS = new HashMap<>();
 
+    /**
+     * H7：按「调用方传入的原始频道字符串」缓存查询结果。
+     *
+     * <p>{@link #requireS2C} / {@link #requireC2S} 是每条数据包都会走的路径，
+     * 原先每次都要 {@code ModIds.parse(channel)}（正则校验 + 新建 Identifier）再查表。
+     * 这里把「原始字符串 → 类型」缓存下来，之后只剩一次 map 查找。
+     */
+    private static final Map<String, CustomPacketPayload.Type<PyPayload>> S2C_BY_NAME = new ConcurrentHashMap<>();
+    private static final Map<String, CustomPacketPayload.Type<PyPayload>> C2S_BY_NAME = new ConcurrentHashMap<>();
+
     private PyNetworking() {
     }
 
@@ -68,18 +79,26 @@ public final class PyNetworking {
 
     /** 取已声明的 S2C 频道类型（发送端与客户端接收端共用）。 */
     public static CustomPacketPayload.Type<PyPayload> requireS2C(String channel) {
-        CustomPacketPayload.Type<PyPayload> type = S2C_TYPES.get(ModIds.parse(channel));
+        CustomPacketPayload.Type<PyPayload> type = S2C_BY_NAME.get(channel);
         if (type == null) {
-            throw new IllegalArgumentException("S2C channel not declared: " + channel);
+            type = S2C_TYPES.get(ModIds.parse(channel));
+            if (type == null) {
+                throw new IllegalArgumentException("S2C channel not declared: " + channel);
+            }
+            S2C_BY_NAME.put(channel, type);
         }
         return type;
     }
 
     /** 取已声明的 C2S 频道类型（客户端发送用）。 */
     public static CustomPacketPayload.Type<PyPayload> requireC2S(String channel) {
-        CustomPacketPayload.Type<PyPayload> type = C2S_TYPES.get(ModIds.parse(channel));
+        CustomPacketPayload.Type<PyPayload> type = C2S_BY_NAME.get(channel);
         if (type == null) {
-            throw new IllegalArgumentException("C2S channel not declared: " + channel);
+            type = C2S_TYPES.get(ModIds.parse(channel));
+            if (type == null) {
+                throw new IllegalArgumentException("C2S channel not declared: " + channel);
+            }
+            C2S_BY_NAME.put(channel, type);
         }
         return type;
     }

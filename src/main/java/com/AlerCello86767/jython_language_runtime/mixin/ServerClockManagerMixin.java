@@ -25,11 +25,16 @@ import net.minecraft.world.clock.WorldClock;
 public abstract class ServerClockManagerMixin {
     @Inject(method = "setTotalTicks", at = @At("RETURN"))
     private void pyModOnSetTotalTicks(Holder<WorldClock> clock, long totalTicks, CallbackInfo ci) {
-        GameEvents.fireTimeChange(clock.getRegisteredName(), totalTicks);
+        if (GameEvents.hasTimeChangeHandlers()) {
+            GameEvents.fireTimeChange(clock.getRegisteredName(), totalTicks);
+        }
     }
 
     @Inject(method = "addTicks", at = @At("RETURN"))
     private void pyModOnAddTicks(Holder<WorldClock> clock, int ticks, CallbackInfo ci) {
+        if (!GameEvents.hasTimeChangeHandlers()) {
+            return;
+        }
         ServerClockManager self = (ServerClockManager) (Object) this;
         GameEvents.fireTimeChange(clock.getRegisteredName(), self.getTotalTicks(clock));
     }
@@ -37,7 +42,7 @@ public abstract class ServerClockManagerMixin {
     @Inject(method = "moveToTimeMarker", at = @At("RETURN"))
     private void pyModOnMoveToTimeMarker(Holder<WorldClock> clock,
                                          ResourceKey<?> timeMarker, CallbackInfoReturnable<Boolean> cir) {
-        if (Boolean.TRUE.equals(cir.getReturnValue())) {
+        if (Boolean.TRUE.equals(cir.getReturnValue()) && GameEvents.hasTimeChangeHandlers()) {
             ServerClockManager self = (ServerClockManager) (Object) this;
             GameEvents.fireTimeChange(clock.getRegisteredName(), self.getTotalTicks(clock));
         }
