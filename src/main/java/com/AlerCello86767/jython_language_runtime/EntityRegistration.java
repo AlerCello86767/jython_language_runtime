@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
+import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
@@ -26,6 +27,7 @@ import net.minecraft.resources.ResourceKey;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MobCategory;
+import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 
 /**
@@ -55,7 +57,9 @@ public final class EntityRegistration {
      *   <li>{@code trackingRange} (int)：客户端追踪范围（区块），默认 5</li>
      *   <li>{@code fireImmune} (boolean)：是否免疫火焰，默认 false</li>
      *   <li>{@code attributes} (Map)：属性 id → 基础值。给了才会注册 LivingEntity 默认属性；
-     *       不给则该实体没有属性表（原版对生物实体会报缺失警告）</li>
+     *       不给则该实体没有属性表（原版对生物实体会报缺失警告）。
+     *       <b>顺序：</b>若引用自定义属性（如 {@code "mymod:mana_regen"}），必须先用
+     *       {@link PyAttributes#register} 注册该属性，否则这里会解析失败</li>
      * </ul>
      */
     public static void registerEntity(String path, PyObject entityClass, Map<String, Object> options) {
@@ -67,7 +71,7 @@ public final class EntityRegistration {
 
         // H11：行为类一个钩子都没实现时，不必给每个实体创建 Python 对象
         boolean hasHooks = PyHandles.implementsAny(entityClass, "tick", "hurtServer", "interact",
-                "getMainArm", "readAdditionalSaveData", "addAdditionalSaveData");
+                "getMainArm", "readAdditionalSaveData", "addAdditionalSaveData", "goals");
         EntityType.Builder<PythonEntity> builder = EntityType.Builder.of(
                 (type, level) -> new PythonEntity(type, level, hasHooks ? entityClass.__call__() : null),
                 category);
@@ -101,7 +105,16 @@ public final class EntityRegistration {
         }
         AttributeSupplier.Builder builder = LivingEntity.createLivingAttributes();
         for (Map.Entry<String, Object> entry : attributes.entrySet()) {
-            builder.add(Registration.resolveAttribute(entry.getKey()), asDouble(entry.getValue(), 0.0d));
+            Holder<Attribute> attribute;
+            try {
+                attribute = Registration.resolveAttribute(entry.getKey());
+            } catch (IllegalArgumentException e) {
+                // 自定义属性必须先于实体注册（进的是同一张 BuiltInRegistries.ATTRIBUTE）
+                throw new IllegalArgumentException("Unknown attribute '" + entry.getKey()
+                        + "' for entity " + type + "：自定义属性请先用 PyAttributes.register(...) 注册，"
+                        + "再注册该实体", e);
+            }
+            builder.add(attribute, asDouble(entry.getValue(), 0.0d));
         }
         FabricDefaultAttributeRegistry.register(type, builder);
         return attributes.size();
