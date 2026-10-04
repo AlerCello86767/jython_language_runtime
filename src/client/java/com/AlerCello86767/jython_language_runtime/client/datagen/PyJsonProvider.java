@@ -8,6 +8,7 @@ import org.python.core.PyObject;
 import net.fabricmc.fabric.api.datagen.v1.FabricPackOutput;
 import net.minecraft.data.CachedOutput;
 import net.minecraft.data.DataProvider;
+import net.minecraft.data.PackOutput;
 
 /**
  * 通用 JSON provider 桥接：把 Python 回调拿到的 {@link PyJsonWriter} 写进指定目录。
@@ -18,18 +19,25 @@ import net.minecraft.data.DataProvider;
  */
 public final class PyJsonProvider implements DataProvider {
     private final FabricPackOutput output;
+    private final PackOutput.Target target;
     private final String directory;
     private final PyObject callback;
 
     public PyJsonProvider(FabricPackOutput output, String directory, PyObject callback) {
+        this(output, PackOutput.Target.DATA_PACK, directory, callback);
+    }
+
+    public PyJsonProvider(FabricPackOutput output, PackOutput.Target target, String directory,
+                          PyObject callback) {
         this.output = output;
+        this.target = target;
         this.directory = directory;
         this.callback = callback;
     }
 
     @Override
     public CompletableFuture<?> run(CachedOutput cachedOutput) {
-        PyJsonWriter writer = new PyJsonWriter(output, cachedOutput, directory);
+        PyJsonWriter writer = new PyJsonWriter(output, cachedOutput, target, directory);
         callback.__call__(Py.java2py(writer));
         return writer.finish();
     }

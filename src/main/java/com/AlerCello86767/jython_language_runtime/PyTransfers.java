@@ -38,6 +38,7 @@ import net.minecraft.world.level.Level;
  *
  * <p><b>方块实体的物品栏已自动暴露给这套 API</b>（见 {@code Registration.registerBlock}），
  * 管道和漏斗能直接取放，Python 不需要额外声明。本门面用于反向场景：Python 主动去操作别人。
+ * 默认暴露为「所有面、所有槽位全开」；要按面收紧（上进料、下出料）用 {@link PyStorage#itemSides}。
  *
  * <p>所有操作都走事务：真正执行才 {@code commit}，探测则 {@code abort}，不会留下中间状态。
  */

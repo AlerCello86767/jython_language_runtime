@@ -5,11 +5,14 @@ import org.python.core.PyObject;
 import com.AlerCello86767.jython_language_runtime.core.PyHandles;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.ContainerHelper;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.level.Level;
@@ -102,7 +105,33 @@ public class PythonBlockEntity extends BlockEntity {
         this.behaviorClass = behaviorClass;
         this.hasHooks = hasHooks;
         this.sync = sync;
-        this.container = new SimpleContainer(containerSize);
+        this.container = createContainer(containerSize);
+    }
+
+    /**
+     * 构造物品栏。若依赖方通过 {@code PyStorage.itemSides} 给本方块实体类型（id 与方块同名）
+     * 声明过按面存取规则，就用 {@link SidedSimpleContainer}（WorldlyContainer），
+     * Fabric 的 {@code ContainerStorage.of} 会自动按面过滤；否则保持普通 {@link SimpleContainer}
+     * （所有面、所有槽位全开，历史行为不变）。
+     */
+    private SimpleContainer createContainer(int size) {
+        if (size <= 0) {
+            return new SimpleContainer(size);
+        }
+        Identifier typeId = BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(getType());
+        java.util.Map<Direction, SidedSimpleContainer.SideRules> rules = SidedSimpleContainer.rulesFor(typeId);
+        if (rules == null || rules.isEmpty()) {
+            return new SimpleContainer(size);
+        }
+        return new SidedSimpleContainer(size, rules, this::onContainerChanged);
+    }
+
+    /**
+     * 物品栏被外部改动（漏斗/管道/菜单）时由 {@link SidedSimpleContainer} 回调：
+     * 走标准 setChanged 链路——标脏持久化，{@code sync} 打开时按 H8 去重后推同步包。
+     */
+    void onContainerChanged() {
+        setChanged();
     }
 
     /** 由 {@link PythonBlock#getTicker} 调用——只有行为类实现了 tick 才会挂 ticker，故这里必有句柄。 */

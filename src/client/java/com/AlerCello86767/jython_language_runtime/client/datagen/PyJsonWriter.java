@@ -33,20 +33,26 @@ import net.minecraft.resources.Identifier;
 public final class PyJsonWriter {
     private final FabricPackOutput output;
     private final CachedOutput cachedOutput;
+    private final PackOutput.Target target;
     private final String directory;
     private final List<CompletableFuture<?>> writes = new ArrayList<>();
     private final CompletableFuture<Void> completion = new CompletableFuture<>();
 
     PyJsonWriter(FabricPackOutput output, CachedOutput cachedOutput, String directory) {
+        this(output, cachedOutput, PackOutput.Target.DATA_PACK, directory);
+    }
+
+    PyJsonWriter(FabricPackOutput output, CachedOutput cachedOutput, PackOutput.Target target, String directory) {
         this.output = output;
         this.cachedOutput = cachedOutput;
+        this.target = target;
         this.directory = directory;
     }
 
     /** Python：{@code out.write("ns:path", { ... })}。 */
     public void write(String id, Map<String, Object> value) {
         Identifier key = DatagenIds.of(id, output.getModId());
-        Path path = output.createPathProvider(PackOutput.Target.DATA_PACK, directory).json(key);
+        Path path = output.createPathProvider(target, directory).json(key);
         writes.add(DataProvider.saveStable(cachedOutput, toJson(value), path));
     }
 

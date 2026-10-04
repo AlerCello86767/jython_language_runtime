@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.python.core.PyObject;
 import org.slf4j.Logger;
@@ -82,6 +83,10 @@ import net.minecraft.world.level.block.entity.BannerPattern;
 import net.minecraft.world.level.block.entity.BannerPatternLayers;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
+import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.level.saveddata.maps.MapId;
 
 /**
@@ -119,6 +124,24 @@ public final class Registration {
      *       仅校验；实际挖掘标签由数据包 tags 提供（游戏标签为数据驱动，运行时不可写入）</li>
      * </ul>
      *
+     * <p>方块状态属性（自定义 {@code StateDefinition}，作物 age / 水位 / 开关等必需）：
+     * <ul>
+     *   <li>{@code properties} (Map)：属性名 → 描述 map。属性名须匹配 {@code [a-z0-9_]+}。
+     *       描述里的 {@code type} 取值：
+     *       <ul>
+     *         <li>{@code "int"}：整型，需 {@code max}（可选 {@code min}，默认 0）→ {@code IntegerProperty}</li>
+     *         <li>{@code "bool"}：布尔 → {@code BooleanProperty}</li>
+     *         <li>{@code "enum"}：字符串枚举，需非空 {@code values} 字符串列表（取值须匹配
+     *             {@code [a-z0-9_]+}）；用按字符串映射的自定义属性承载（Python 侧仍以字符串读写）</li>
+     *       </ul>
+     *   </li>
+     *   <li>{@code defaults} (Map)：属性名 → 默认取值，用于生成默认 BlockState；属性名必须在
+     *       {@code properties} 里声明过。取值类型须与属性类型匹配。</li>
+     * </ul>
+     * <p>Python 侧读写状态用本门面的静态便捷方法：{@code getInt/setInt}、{@code getBool/setBool}、
+     * {@code getString/setString}、{@code hasProperty}（{@code set*} 返回新的 BlockState，
+     * 交给 {@code level.setBlock} 写回）。
+     *
      * <p>方块实体（P10）：
      * <ul>
      *   <li>{@code blockEntity} (Python 类)：给了就改用 {@link PythonBlock} 宿主，并连带注册
@@ -146,6 +169,22 @@ public final class Registration {
                     "hand", "wood", "stone", "iron", "diamond", "netherite");
         }
 
+        // 方块状态属性声明：Python 用 properties 描述自定义 StateDefinition 属性
+        List<Property<?>> declaredProperties = buildDeclaredProperties(asMap(options.get("properties")));
+        Map<String, Property<?>> declaredByName = new LinkedHashMap<>();
+        for (Property<?> property : declaredProperties) {
+            declaredByName.put(property.getName(), property);
+        }
+        Map<String, Object> defaults = asMap(options.get("defaults"));
+        if (defaults != null && !defaults.isEmpty() && declaredProperties.isEmpty()) {
+            throw new IllegalArgumentException("方块 \"" + path + "\" 提供了 defaults 但没有声明 properties");
+        }
+        boolean facing = asBoolean(options.get("facing"), false);
+        if (facing && declaredByName.containsKey("facing")) {
+            throw new IllegalArgumentException("方块 \"" + path
+                    + "\" 的 properties 不能声明 \"facing\"：它由 facing=true 自动提供");
+        }
+
         // 构造方块设置 → 方块实例（26.1 要求 Properties 先绑定注册键）
         BlockBehaviour.Properties properties = BlockBehaviour.Properties.of()
                 .setId(ResourceKey.create(Registries.BLOCK, id))
@@ -154,21 +193,53 @@ public final class Registration {
         if (requiresTool) {
             properties.requiresCorrectToolForDrops();
         }
+        // 作物/非满方块：noCollision 关掉碰撞（getShape 只影响轮廓与可视形状），
+        // noOcclusion 让方块不遮挡邻接面（玻璃/机器外壳之类需要）
+        if (asBoolean(options.get("noCollision"), false)) {
+            properties.noCollision();
+        }
+        if (asBoolean(options.get("noOcclusion"), false)) {
+            properties.noOcclusion();
+        }
 
-        // blockEntity：给了 Python 类就用「带方块实体的方块」宿主，否则用普通 Block
+        // blockEntity：给了 Python 类就用「带方块实体的方块」宿主
+        // behavior：只给方块级行为钩子、不创建方块实体（作物这类用这个，别白挂一个 BE）
         Object blockEntity = options.get("blockEntity");
-        // 需要方块实体、或需要声明朝向时，都得用 Python 宿主——基础 Block 无法声明方块状态属性
-        boolean facing = asBoolean(options.get("facing"), false);
-        PyObject behavior = blockEntity instanceof PyObject py ? py : null;
+        Object blockBehavior = options.get("behavior");
+        PyObject behavior = blockEntity instanceof PyObject py ? py
+                : (blockBehavior instanceof PyObject plainBehavior ? plainBehavior : null);
+        boolean hasBlockEntity = blockEntity instanceof PyObject;
         boolean ticking = asBoolean(options.get("ticking"), false);
         boolean sync = asBoolean(options.get("sync"), true);
         int containerSize = asInt(options.get("size"), 9);
-        PythonBlock pythonBlock = (behavior != null || facing)
-                ? (facing
-                        ? new PythonFacingBlock(properties, behavior, ticking, sync, containerSize)
-                        : new PythonBlock(properties, behavior, ticking, sync, containerSize))
-                : null;
-        Block block = pythonBlock != null ? pythonBlock : new Block(properties);
+
+        // 需要方块实体、需要声明朝向、或需要自定义方块状态属性时，都得用 Python 宿主——
+        // 基础 Block 无法声明方块状态属性
+        boolean usePythonHost = behavior != null || facing || !declaredProperties.isEmpty();
+        // 动态属性必须在 Block 构造（super()）期间可见：createBlockStateDefinition 在构造期被调用，
+        // 那时实例字段尚未赋值，因此用 ThreadLocal 传递，构造完成后立即清理
+        if (!declaredProperties.isEmpty()) {
+            PythonBlock.PENDING_PROPERTIES.set(declaredProperties);
+        }
+        PythonBlock pythonBlock = null;
+        try {
+            pythonBlock = usePythonHost
+                    ? (facing
+                            ? new PythonFacingBlock(properties, behavior, ticking, sync, containerSize)
+                            : new PythonBlock(properties, behavior, ticking, sync, containerSize, hasBlockEntity))
+                    : null;
+            // 构造完成后 StateDefinition 才完整，此时才能写入默认状态取值
+            if (pythonBlock != null) {
+                pythonBlock.applyDefaultValues(defaults);
+            }
+        } finally {
+            if (!declaredProperties.isEmpty()) {
+                PythonBlock.PENDING_PROPERTIES.remove();
+            }
+        }
+        // lambda 工厂要求捕获「实际上的最终变量」，故取一个 final 别名
+        final PythonBlock host = pythonBlock;
+        Block block = host != null ? host : new Block(properties);
 
         Registry.register(BuiltInRegistries.BLOCK, id, block);
         // 关联注册：同名 BlockItem，使方块可以以物品形式持有/放置
@@ -176,12 +247,12 @@ public final class Registration {
                 .setId(ResourceKey.create(Registries.ITEM, id));
         Registry.register(BuiltInRegistries.ITEM, id, new BlockItem(block, blockItemProperties));
 
-        if (pythonBlock != null && pythonBlock.hasBehavior()) {
+        if (host != null && host.hasBlockEntity()) {
             // 工厂委托回方块自身，绕开「BlockEntityType 与方块互相依赖」的循环
             BlockEntityType<PythonBlockEntity> entityType = FabricBlockEntityTypeBuilder
-                    .create((pos, state) -> (PythonBlockEntity) pythonBlock.newBlockEntity(pos, state), block)
+                    .create((pos, state) -> (PythonBlockEntity) host.newBlockEntity(pos, state), block)
                     .build();
-            pythonBlock.attachEntityType(entityType);
+            host.attachEntityType(entityType);
             Registry.register(BuiltInRegistries.BLOCK_ENTITY_TYPE, id, entityType);
             // 把方块实体的物品栏暴露给自动化：管道/漏斗经 fabric-transfer-api-v1 直接取放。
             // 方向透传——原版很多方块只在特定面暴露，这里交给 ContainerStorage 判断
@@ -189,8 +260,10 @@ public final class Registration {
                     (be, direction) -> ContainerStorage.of(be.container(), direction),
                     entityType);
         }
-        LOGGER.info("Registered block {} (hardness={}, resistance={}, sound={}, requiresTool={}, blockEntity={})",
-                id, hardness, resistance, soundName, requiresTool, pythonBlock != null);
+        LOGGER.info("Registered block {} (hardness={}, resistance={}, sound={}, requiresTool={}, blockEntity={},"
+                        + " stateProperties={})",
+                id, hardness, resistance, soundName, requiresTool, host != null && host.hasBlockEntity(),
+                declaredByName.keySet());
     }
 
     /**
@@ -963,6 +1036,205 @@ public final class Registration {
     @SuppressWarnings("unchecked")
     private static <T> Holder<T> lazyHolder(ResourceKey<T> key) {
         return Holder.Reference.createStandAlone((HolderOwner<T>) PERMISSIVE_OWNER, key);
+    }
+
+    // ---------- 方块状态属性声明（properties / defaults） ----------
+
+    /** 属性名/枚举取值的合法字符集（与原版一致）。 */
+    private static final String VALID_PROPERTY_NAME = "[a-z0-9_]+";
+
+    /**
+     * 把 Python 的 {@code properties} 描述翻译成原版属性对象。
+     *
+     * <p>支持 {@code int}（{@link IntegerProperty}）、{@code bool}（{@link BooleanProperty}）、
+     * {@code enum}（按字符串映射的 {@link StringListProperty}）；非法名字、未知类型、缺失参数
+     * 都抛带中文提示的 {@link IllegalArgumentException}。
+     */
+    private static List<Property<?>> buildDeclaredProperties(Map<String, Object> declared) {
+        List<Property<?>> result = new ArrayList<>();
+        if (declared == null) {
+            return result;
+        }
+        for (Map.Entry<String, Object> entry : declared.entrySet()) {
+            String name = entry.getKey();
+            if (name == null || !name.matches(VALID_PROPERTY_NAME)) {
+                throw new IllegalArgumentException(
+                        "方块状态属性名必须匹配 " + VALID_PROPERTY_NAME + "，收到: " + name);
+            }
+            Map<String, Object> spec = asMap(entry.getValue());
+            if (spec == null) {
+                throw new IllegalArgumentException("方块状态属性 \"" + name
+                        + "\" 的描述必须是 map，例如 {\"type\": \"int\", \"max\": 7}");
+            }
+            String type = asString(spec.get("type"), null);
+            if (type == null) {
+                throw new IllegalArgumentException(
+                        "方块状态属性 \"" + name + "\" 缺少 \"type\"（int / bool / enum）");
+            }
+            switch (type) {
+            case "int": {
+                if (!spec.containsKey("max")) {
+                    throw new IllegalArgumentException("int 属性 \"" + name + "\" 缺少 \"max\"");
+                }
+                int min = asInt(spec.get("min"), 0);
+                int max = asInt(spec.get("max"), min);
+                if (max < min) {
+                    throw new IllegalArgumentException("int 属性 \"" + name + "\" 的 max(" + max
+                            + ") 不能小于 min(" + min + ")");
+                }
+                result.add(IntegerProperty.create(name, min, max));
+                break;
+            }
+            case "bool":
+                result.add(BooleanProperty.create(name));
+                break;
+            case "enum": {
+                List<?> rawValues = asList(spec.get("values"));
+                if (rawValues == null || rawValues.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "enum 属性 \"" + name + "\" 需要非空的 \"values\" 字符串列表");
+                }
+                List<String> values = new ArrayList<>();
+                for (Object raw : rawValues) {
+                    String value = asString(raw, null);
+                    if (value == null || !value.matches(VALID_PROPERTY_NAME)) {
+                        throw new IllegalArgumentException("enum 属性 \"" + name + "\" 的取值必须匹配 "
+                                + VALID_PROPERTY_NAME + "，收到: " + raw);
+                    }
+                    if (values.contains(value)) {
+                        throw new IllegalArgumentException(
+                                "enum 属性 \"" + name + "\" 的取值重复: " + value);
+                    }
+                    values.add(value);
+                }
+                result.add(new StringListProperty(name, values));
+                break;
+            }
+            default:
+                throw new IllegalArgumentException("未知的方块状态属性类型 \"" + type
+                        + "\"（属性 \"" + name + "\"），支持 int / bool / enum");
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 「按字符串映射」的枚举属性：取值就是 Python 给的字符串列表。
+     *
+     * <p>为什么不用 {@link net.minecraft.world.level.block.state.properties.EnumProperty}：它要求
+     * 一个编译期存在的 {@code Enum & StringRepresentable} 类，而 Python 在运行期才能给出任意取值；
+     * 这里用自定义 {@link Property}&lt;String&gt; 达到同样效果（方块状态 JSON、NBT/网络序列化
+     * 都按字符串读写）。
+     */
+    private static final class StringListProperty extends Property<String> {
+        private final List<String> values;
+
+        StringListProperty(String name, List<String> values) {
+            super(name, String.class);
+            this.values = List.copyOf(values);
+        }
+
+        @Override
+        public List<String> getPossibleValues() {
+            return values;
+        }
+
+        @Override
+        public String getName(String value) {
+            return value;
+        }
+
+        @Override
+        public Optional<String> getValue(String value) {
+            return values.contains(value) ? Optional.of(value) : Optional.empty();
+        }
+
+        @Override
+        public int getInternalIndex(String value) {
+            return values.indexOf(value);
+        }
+    }
+
+    // ---------- 方块状态读写便捷方法（供 Python 行为类调用） ----------
+
+    /** 方块当前状态是否声明了名为 {@code name} 的属性。 */
+    public static boolean hasProperty(BlockState state, String name) {
+        return findProperty(state, name) != null;
+    }
+
+    /** 读取 int 属性；属性缺失或类型不符时抛带中文提示的 {@link IllegalArgumentException}。 */
+    public static int getInt(BlockState state, String name) {
+        Property<?> property = requireProperty(state, name);
+        if (!(property instanceof IntegerProperty intProperty)) {
+            throw new IllegalArgumentException("方块状态属性 \"" + name + "\" 不是 int 类型");
+        }
+        return state.getValue(intProperty);
+    }
+
+    /** 写入 int 属性，返回新的 {@link BlockState}（原状态不可变）；取值非法时抛错。 */
+    public static BlockState setInt(BlockState state, String name, int value) {
+        Property<?> property = requireProperty(state, name);
+        if (!(property instanceof IntegerProperty intProperty)) {
+            throw new IllegalArgumentException("方块状态属性 \"" + name + "\" 不是 int 类型");
+        }
+        return state.setValue(intProperty, value);
+    }
+
+    /** 读取 bool 属性。 */
+    public static boolean getBool(BlockState state, String name) {
+        Property<?> property = requireProperty(state, name);
+        if (!(property instanceof BooleanProperty boolProperty)) {
+            throw new IllegalArgumentException("方块状态属性 \"" + name + "\" 不是 bool 类型");
+        }
+        return state.getValue(boolProperty);
+    }
+
+    /** 写入 bool 属性，返回新的 {@link BlockState}。 */
+    public static BlockState setBool(BlockState state, String name, boolean value) {
+        Property<?> property = requireProperty(state, name);
+        if (!(property instanceof BooleanProperty boolProperty)) {
+            throw new IllegalArgumentException("方块状态属性 \"" + name + "\" 不是 bool 类型");
+        }
+        return state.setValue(boolProperty, value);
+    }
+
+    /** 读取枚举（字符串）属性，返回取值字符串。 */
+    public static String getString(BlockState state, String name) {
+        Property<?> property = requireProperty(state, name);
+        if (!(property instanceof StringListProperty stringProperty)) {
+            throw new IllegalArgumentException("方块状态属性 \"" + name + "\" 不是 enum 类型");
+        }
+        return state.getValue(stringProperty);
+    }
+
+    /** 写入枚举（字符串）属性，返回新的 {@link BlockState}；取值不在声明列表内时抛错。 */
+    public static BlockState setString(BlockState state, String name, String value) {
+        Property<?> property = requireProperty(state, name);
+        if (!(property instanceof StringListProperty stringProperty)) {
+            throw new IllegalArgumentException("方块状态属性 \"" + name + "\" 不是 enum 类型");
+        }
+        return state.setValue(stringProperty, value);
+    }
+
+    private static Property<?> requireProperty(BlockState state, String name) {
+        Property<?> property = findProperty(state, name);
+        if (property == null) {
+            throw new IllegalArgumentException("方块 " + state.getBlock()
+                    + " 没有声明方块状态属性 \"" + name + "\"");
+        }
+        return property;
+    }
+
+    private static Property<?> findProperty(BlockState state, String name) {
+        if (name == null) {
+            return null;
+        }
+        for (Property<?> property : state.getProperties()) {
+            if (property.getName().equals(name)) {
+                return property;
+            }
+        }
+        return null;
     }
 
     // ---------- 枚举校验 ----------

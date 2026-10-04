@@ -24,6 +24,7 @@ import com.AlerCello86767.jython_language_runtime.client.datagen.PyRecipeGen;
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyRecipeProvider;
 
 import net.fabricmc.fabric.api.datagen.v1.FabricDataGenerator;
+import net.minecraft.data.PackOutput;
 import net.minecraft.resources.Identifier;
 
 /**
@@ -134,6 +135,37 @@ public final class PyDatagen {
                 .addProvider((FabricDataGenerator.Pack.Factory<PyJsonProvider>)
                         output -> new PyJsonProvider(output, directory, callback));
         LOGGER.info("Registered datagen json provider '{}' for {}", directory, dataGenerator.getModId());
+    }
+
+    /**
+     * 资源侧通用 JSON provider：回调收到 {@link PyJsonWriter}（{@code out}），
+     * 写 {@code assets/<ns>/<目录>/*.json}。
+     *
+     * <p>方块状态（{@code "blockstates"}）、模型（{@code "models"}）、物品定义（{@code "items"}）
+     * 这类**资产** JSON 用它；数据包侧（{@code data/}）用 {@link #json(Object, String, PyObject)}。
+     *
+     * <p><b>目录与 id 是拼接关系</b>：`assets/<ns>/<目录>/<id 的 path>.json`。
+     * 例如目录 {@code "models"} + id {@code "mymod:block/ruby_crop_stage0"}
+     * → {@code assets/mymod/models/block/ruby_crop_stage0.json}。别写成 {@code "models/block"}，
+     * 那会得到 {@code models/block/block/...}。
+     *
+     * <pre>
+     * PyDatagen.assetsJson(pack, "blockstates", lambda out: out.write("mymod:ruby_crop", {
+     *     "variants": {"age=0": {"model": "mymod:block/ruby_crop_stage0"}, ...},
+     * }))
+     * </pre>
+     */
+    public static void assetsJson(Object generator, String directory, PyObject callback) {
+        FabricDataGenerator dataGenerator = require(generator);
+        if (directory == null || directory.isEmpty()) {
+            throw new IllegalArgumentException("assetsJson requires a directory name");
+        }
+        dataGenerator.createPack()
+                .addProvider((FabricDataGenerator.Pack.Factory<PyJsonProvider>)
+                        output -> new PyJsonProvider(output, PackOutput.Target.RESOURCE_PACK,
+                                directory, callback));
+        LOGGER.info("Registered datagen assets json provider '{}' for {}",
+                directory, dataGenerator.getModId());
     }
 
     /**

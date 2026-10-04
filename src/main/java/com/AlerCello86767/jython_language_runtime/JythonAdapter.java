@@ -190,7 +190,7 @@ public class JythonAdapter implements LanguageAdapter {
             if (interpreter == null) {
                 Properties props = new Properties();
                 // 跳过 Java 包扫描缓存：省掉启动期扫描 jar 的开销，也避免写只读的 jar-in-jar 位置。
-                // 注意：该属性管的是「包扫描缓存」，不是 $py.class 的位置（详见 docs/performance.md 的 H10）
+                // 注意：该属性管的是「包扫描缓存」，不是 $py.class 的位置（详见 docs/internals/performance.md 的 H10）
                 props.setProperty("python.cachedir.skip", "true");
                 // 跳过 site 导入：启动更快，也避免在模组环境里找不到 site.py
                 props.setProperty("python.import.site", "false");
