@@ -1,0 +1,149 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version '1.18-SNAPSHOT'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+sourceSets {
+    main {
+        // Python 脚本作为资源打包，运行时由 JythonAdapter 从模组根目录读取
+        resources.srcDir 'src/main/python'
+    }
+}
+
+configurations {
+    // Jython 随 jython_language_runtime 组暴露：jython 无 fabric.mod.json，必须作为 shaded 配置归入模组
+    jython {
+        // 这些库游戏本身已提供，若在 knot 中重复定义会触发
+        // loader constraint violation（ASM 与 Mixin 冲突等）
+        exclude group: 'org.ow2.asm'
+        exclude group: 'com.google.guava'
+        exclude group: 'com.ibm.icu'
+        exclude group: 'io.netty'
+        exclude group: 'org.bouncycastle'
+        exclude group: 'commons-io'
+        exclude group: 'org.apache.commons', module: 'commons-compress'
+    }
+}
+
+loom {
+    splitEnvironmentSourceSets()
+
+    mods {
+        "jython_language_runtime" {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+            // jython 作为 shaded 依赖归入本模组组，Knot 才允许加载 org.python 类
+            configuration configurations.jython
+        }
+    }
+}
+
+fabricApi {
+    configureDataGeneration {
+        client = true
+    }
+}
+
+repositories {
+    // Add repositories to retrieve artifacts from in here.
+    // You should only use this when depending on other mods because
+    // Loom adds the essential maven repositories to download Minecraft and libraries from automatically.
+    // See https://docs.gradle.org/current/userguide/declaring_repositories.html
+    // for more information about repositories.
+}
+
+dependencies {
+    // To change the versions see the gradle.properties file
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+    implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    // jython：implementation 提供类路径，jython 配置赋予 jython_language_runtime 组归属；
+    // include 以 jar-in-jar 形式嵌入最终包（运行时依赖由游戏环境提供）
+    implementation 'org.python:jython-slim:2.7.5b1'
+    jython 'org.python:jython-slim:2.7.5b1'
+    include 'org.python:jython-slim:2.7.5b1'
+    // jython-slim 的传递依赖：Loom include 默认只包含直接依赖，需显式列出
+    include 'com.github.jnr:jnr-posix:3.2.1'
+    include 'com.github.jnr:jnr-ffi:2.3.0'
+    include 'com.github.jnr:jnr-constants:0.11.0'
+    include 'com.github.jnr:jffi:1.4.0'
+    include 'com.github.jnr:jnr-a64asm:1.0.0'
+    include 'com.github.jnr:jnr-x86asm:1.0.2'
+    include 'com.github.jnr:jnr-netdb:1.2.0'
+    include 'org.antlr:antlr:3.5.3'
+    include 'org.antlr:antlr-runtime:3.5.3'
+    include 'org.antlr:ST4:4.3.1'
+    include 'jakarta.servlet:jakarta.servlet-api:5.0.0'
+    include 'com.carrotsearch:java-sizeof:0.0.5'
+    include 'jline:jline:2.14.6'
+    include 'org.apache.ant:ant:1.10.14'
+}
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "loader_version", project.loader_version
+    filteringCharset "UTF-8"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+                "minecraft_version": project.minecraft_version,
+                "loader_version": project.loader_version
+    }
+}
+
+def targetJavaVersion = 25
+tasks.withType(JavaCompile).configureEach {
+    // ensure that the encoding is set to UTF-8, no matter what the system default is
+    // this fixes some edge cases with special characters not displaying correctly
+    // see http://yodaconditions.net/blog/fix-for-java-file-encoding-problems-with-gradle.html
+    // If Javadoc is generated, this must be specified in that task too.
+    it.options.encoding = "UTF-8"
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        it.options.release.set(targetJavaVersion)
+    }
+}
+
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+    // Loom will automatically attach sourcesJar to a RemapSourcesJar task and to the "build" task
+    // if it is present.
+    // If you remove this line, sources will not be generated.
+    withSourcesJar()
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+// configure the maven publication
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+
+    // See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
+    repositories {
+        // Add repositories to publish to here.
+        // Notice: This block does NOT have the same function as the block in the top level.
+        // The repositories here will be used for publishing your artifact, not for
+        // retrieving dependencies.
+    }
+}

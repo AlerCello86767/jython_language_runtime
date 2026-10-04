@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# Loom
+run/
+remappedSrc/
+src/main/generated/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.settings/
+.classpath
+.project
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 日志 / JVM 崩溃转储 / 编辑器残留
+*.log
+hs_err_pid*
+replay_pid*
+.edit_probe
+
+py_test/
+.trae/
+docs/

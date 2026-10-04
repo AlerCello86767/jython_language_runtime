@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "jython_language_runtime",
+  "version": "${version}",
+  "name": "jython_language_runtime",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {},
+  "languageAdapters": {
+    "jython": "com.AlerCello86767.jython_language_runtime.JythonAdapter"
+  },
+  "mixins": [
+    "jython_language_runtime.mixins.json",
+    {
+      "config": "jython_language_runtime.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}",
+    "java": ">=21"
+  }
+}
