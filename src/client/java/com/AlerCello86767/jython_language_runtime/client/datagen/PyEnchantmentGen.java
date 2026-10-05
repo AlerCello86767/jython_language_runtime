@@ -41,7 +41,9 @@ import net.minecraft.resources.Identifier;
  *   <li>{@code damage}：数字或 {@code {base, perLevel}} → {@code minecraft:damage} 的
  *       {@code minecraft:add} 值效果（参考原版 sharpness）</li>
  *   <li>{@code postAttack}：{@code {affected, enchanted, effect, chance|requirements}} →
- *       {@code minecraft:post_attack}（参考原版 thorns）</li>
+ *       {@code minecraft:post_attack}（参考原版 thorns）。{@code chance} 收数字或
+ *       {@code {base, perLevel}}，会自动包成 {@code minecraft:enchantment_level} 值效果；
+ *       要换成别的值效果就直接给带 {@code type} 的映射</li>
  *   <li>{@code attributes}：{@code [{attribute, amount, id, operation, slot?}]} →
  *       {@code minecraft:attributes}（参考原版 depth_strider）</li>
  *   <li>{@code projectileSpawned}：{@code {effect, requirements?}} 或它的列表 →
@@ -253,11 +255,33 @@ public final class PyEnchantmentGen {
             entry.put("requirements", requirements);
         } else if (map.containsKey("chance")) {
             Map<String, Object> built = new LinkedHashMap<>();
-            built.put("chance", levelBased(map.get("chance")));
+            built.put("chance", chanceEffect(map.get("chance")));
             built.put("condition", "minecraft:random_chance");
             entry.put("requirements", built);
         }
         return entry;
+    }
+
+    /**
+     * {@code requirements.chance} → **幸运值效果**（EnchantmentValueEffect），不是裸的
+     * {@code LevelBasedValue}。
+     *
+     * <p>原版 thorns 的写法是 {@code {"type": "minecraft:enchantment_level",
+     * "amount": {"type": "minecraft:linear", "base": 0.15, "per_level_above_first": 0.15}}}：
+     * 直接写 {@code {"type": "minecraft:linear"}} 会被判为未知的效果类型而整份附魔解析失败。
+     *
+     * <p>数字 / {@code {base, perLevel}} 自动套上 {@code minecraft:enchantment_level}；
+     * 已经是带 {@code type} 的映射则原样透传（想用别的值效果时）。
+     */
+    private static Map<String, Object> chanceEffect(Object value) {
+        Map<String, Object> map = asMap(value);
+        if (map != null && map.containsKey("type")) {
+            return map;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("type", "minecraft:enchantment_level");
+        out.put("amount", levelBased(value));
+        return out;
     }
 
     /** {@code minecraft:attributes} 的 EnchantmentAttributeEffect 列表（参考原版 depth_strider）。 */

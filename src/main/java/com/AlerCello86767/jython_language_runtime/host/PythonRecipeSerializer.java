@@ -19,7 +19,7 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.resources.Identifier;
-import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.crafting.RecipeBookCategory;
 import net.minecraft.world.item.crafting.RecipeSerializer;
 import net.minecraft.world.item.crafting.RecipeType;
@@ -183,7 +183,9 @@ public final class PythonRecipeSerializer {
         Dynamic<T> root = new Dynamic<>(ops, ops.createMap(input.entries()));
 
         // 输入：{item, count?} 列表；count 缺省取声明表的默认值
-        List<ItemStack> inputStacks = new ArrayList<>();
+        // 注意：这里只能造 ItemStackTemplate。解析期 new ItemStack 会读 holder 的组件，
+        // 而组件要到 updateComponentsAndStaticRegistryTags 才绑定 → NPE（详见 PythonRecipe 类注释）。
+        List<ItemStackTemplate> inputTemplates = new ArrayList<>();
         List<Dynamic<T>> inputElements = root.get("inputs").asStream().toList();
         int inputIndex = 0;
         for (Dynamic<T> element : inputElements) {
@@ -198,7 +200,7 @@ public final class PythonRecipeSerializer {
             }
             int fallbackCount = slot < inputs.size() ? inputs.get(slot).count() : 1;
             int count = Math.max(1, element.get("count").asInt(fallbackCount));
-            inputStacks.add(new ItemStack(BuiltInRegistries.ITEM.getValue(itemId), count));
+            inputTemplates.add(new ItemStackTemplate(BuiltInRegistries.ITEM.getValue(itemId), count));
         }
 
         // 输出：{item, count?, chance?} 列表；chance 缺省 1.0（必定产出）
@@ -218,7 +220,8 @@ public final class PythonRecipeSerializer {
             int count = Math.max(1, element.get("count").asInt(1));
             float chance = element.get("chance").asFloat(1.0f);
             chance = Math.max(0.0f, Math.min(1.0f, chance));
-            results.add(new PythonRecipe.Output(new ItemStack(BuiltInRegistries.ITEM.getValue(itemId), count), chance));
+            results.add(new PythonRecipe.Output(
+                    new ItemStackTemplate(BuiltInRegistries.ITEM.getValue(itemId), count), chance));
         }
 
         // 附加字段：按声明表读取，缺失补类型默认值
@@ -244,7 +247,7 @@ public final class PythonRecipeSerializer {
             }
         }
 
-        return DataResult.success(new PythonRecipe(this, inputStacks, results, values));
+        return DataResult.success(new PythonRecipe(this, inputTemplates, results, values));
     }
 
     // ------------------------------------------------------------------
@@ -252,17 +255,17 @@ public final class PythonRecipeSerializer {
     // ------------------------------------------------------------------
 
     private <T> RecordBuilder<T> encodeBody(PythonRecipe recipe, DynamicOps<T> ops, RecordBuilder<T> prefix) {
-        prefix.add("inputs", ops.createList(recipe.inputStacks().stream().map(stack -> {
+        prefix.add("inputs", ops.createList(recipe.inputs().stream().map(template -> {
             Map<T, T> entry = new LinkedHashMap<>();
-            entry.put(ops.createString("item"), ops.createString(itemName(stack)));
-            entry.put(ops.createString("count"), ops.createInt(stack.getCount()));
+            entry.put(ops.createString("item"), ops.createString(itemName(template)));
+            entry.put(ops.createString("count"), ops.createInt(template.count()));
             return ops.createMap(entry.entrySet().stream().map(e -> Pair.of(e.getKey(), e.getValue())));
         })));
 
         prefix.add("outputs", ops.createList(recipe.outputs().stream().map(output -> {
             Map<T, T> entry = new LinkedHashMap<>();
-            entry.put(ops.createString("item"), ops.createString(itemName(output.stack())));
-            entry.put(ops.createString("count"), ops.createInt(output.stack().getCount()));
+            entry.put(ops.createString("item"), ops.createString(itemName(output.template())));
+            entry.put(ops.createString("count"), ops.createInt(output.template().count()));
             if (output.chance() < 1.0f) {
                 entry.put(ops.createString("chance"), ops.createFloat(output.chance()));
             }
@@ -292,8 +295,8 @@ public final class PythonRecipeSerializer {
         return prefix;
     }
 
-    private static String itemName(ItemStack stack) {
-        return BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+    private static String itemName(ItemStackTemplate template) {
+        return BuiltInRegistries.ITEM.getKey(template.item().value()).toString();
     }
 
     // ------------------------------------------------------------------
@@ -301,15 +304,15 @@ public final class PythonRecipeSerializer {
     // ------------------------------------------------------------------
 
     private void write(RegistryFriendlyByteBuf buf, PythonRecipe recipe) {
-        List<ItemStack> ins = recipe.inputStacks();
+        List<ItemStackTemplate> ins = recipe.inputs();
         buf.writeVarInt(ins.size());
-        for (ItemStack stack : ins) {
-            ItemStack.STREAM_CODEC.encode(buf, stack);
+        for (ItemStackTemplate template : ins) {
+            ItemStackTemplate.STREAM_CODEC.encode(buf, template);
         }
         List<PythonRecipe.Output> outs = recipe.outputs();
         buf.writeVarInt(outs.size());
         for (PythonRecipe.Output output : outs) {
-            ItemStack.STREAM_CODEC.encode(buf, output.stack());
+            ItemStackTemplate.STREAM_CODEC.encode(buf, output.template());
             buf.writeFloat(output.chance());
         }
         for (Map.Entry<String, FieldType> entry : fields.entrySet()) {
@@ -336,15 +339,15 @@ public final class PythonRecipeSerializer {
 
     private PythonRecipe read(RegistryFriendlyByteBuf buf) {
         int inputCount = buf.readVarInt();
-        List<ItemStack> ins = new ArrayList<>(inputCount);
+        List<ItemStackTemplate> ins = new ArrayList<>(inputCount);
         for (int i = 0; i < inputCount; i++) {
-            ins.add(ItemStack.STREAM_CODEC.decode(buf));
+            ins.add(ItemStackTemplate.STREAM_CODEC.decode(buf));
         }
         int outputCount = buf.readVarInt();
         List<PythonRecipe.Output> outs = new ArrayList<>(outputCount);
         for (int i = 0; i < outputCount; i++) {
-            ItemStack stack = ItemStack.STREAM_CODEC.decode(buf);
-            outs.add(new PythonRecipe.Output(stack, buf.readFloat()));
+            ItemStackTemplate template = ItemStackTemplate.STREAM_CODEC.decode(buf);
+            outs.add(new PythonRecipe.Output(template, buf.readFloat()));
         }
         Map<String, Object> values = new LinkedHashMap<>();
         for (Map.Entry<String, FieldType> entry : fields.entrySet()) {

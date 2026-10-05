@@ -1,11 +1,14 @@
 package com.AlerCello86767.jython_language_runtime.host;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
+import net.minecraft.world.item.crafting.Ingredient;
 import net.minecraft.world.item.crafting.PlacementInfo;
 import net.minecraft.world.item.crafting.Recipe;
 import net.minecraft.world.item.crafting.RecipeBookCategory;
@@ -15,6 +18,14 @@ import net.minecraft.world.level.Level;
 
 /**
  * 通用配方宿主（L1.1）：承载「一个数据包 JSON 配方实例」。
+ *
+ * <p><b>为什么存 {@link ItemStackTemplate} 而不是 {@link ItemStack}：</b>配方 JSON 是在
+ * `ReloadableServerResources.loadResources` 那次 reload 里解析的，而物品 holder 的组件（`Holder
+ * .components()`）要到之后单独调用的 `updateComponentsAndStaticRegistryTags()` 才绑定。
+ * 解析期 `new ItemStack(...)` 会直接抛 `NullPointerException: Components not bound yet`，
+ * 且异常会冲出 `SimpleJsonResourceListener.scanDirectory`，**导致整轮配方（含原版）全部加载失败**。
+ * 原版同样规避了这点——`ShapedRecipe.result` 存的就是 `ItemStackTemplate`，到 {@code assemble()}
+ * 才 `create()` 出 `ItemStack`。本类照此办理：模板在解析期建，栈在运行期产生。
  *
  * <p>26.1.2 的 {@code Recipe} 接口已用 javap 核实为：
  * <pre>{@code
@@ -36,26 +47,26 @@ import net.minecraft.world.level.Level;
  * 因为 Fabric 的配方同步按 serializer 分组下发（{@code fabric_getRecipesBySyncedSerializer}）。
  */
 public final class PythonRecipe implements Recipe<PythonRecipeInput> {
-    /** 单个产物：物品栈 + 产出概率（1.0 表示必出）。 */
-    public record Output(ItemStack stack, float chance) {
+    /** 单个产物：物品模板 + 产出概率（1.0 表示必出）。 */
+    public record Output(ItemStackTemplate template, float chance) {
     }
 
     private final PythonRecipeSerializer owner;
-    private final List<ItemStack> inputStacks;
+    private final List<ItemStackTemplate> inputs;
     private final List<Output> outputs;
     private final Map<String, Object> fieldValues;
 
-    public PythonRecipe(PythonRecipeSerializer owner, List<ItemStack> inputStacks,
+    public PythonRecipe(PythonRecipeSerializer owner, List<ItemStackTemplate> inputs,
                         List<Output> outputs, Map<String, Object> fieldValues) {
         this.owner = owner;
-        this.inputStacks = List.copyOf(inputStacks);
+        this.inputs = List.copyOf(inputs);
         this.outputs = List.copyOf(outputs);
         this.fieldValues = Collections.unmodifiableMap(new LinkedHashMap<>(fieldValues));
     }
 
-    /** 配方的具体输入物品栈（按槽位顺序）。 */
-    public List<ItemStack> inputStacks() {
-        return inputStacks;
+    /** 配方的具体输入物品模板（按槽位顺序）。 */
+    public List<ItemStackTemplate> inputs() {
+        return inputs;
     }
 
     /** 配方声明的产物列表（含概率）。 */
@@ -73,19 +84,21 @@ public final class PythonRecipe implements Recipe<PythonRecipeInput> {
      *
      * <p>规则：传入槽位可以比配方输入多（机器常有多余空槽），多出的忽略；配方的每个输入槽都必须匹配。
      * 无输入的配方只在「传入全空」时匹配。
+     *
+     * <p>物品相同按 **holder 身份** 比较（原版一个物品一个 holder），不触达组件，热路径上无分配。
      */
     @Override
     public boolean matches(PythonRecipeInput input, Level level) {
-        if (inputStacks.isEmpty()) {
+        if (inputs.isEmpty()) {
             return input.isEmpty();
         }
-        if (input.size() < inputStacks.size()) {
+        if (input.size() < inputs.size()) {
             return false;
         }
-        for (int i = 0; i < inputStacks.size(); i++) {
-            ItemStack need = inputStacks.get(i);
+        for (int i = 0; i < inputs.size(); i++) {
+            ItemStackTemplate need = inputs.get(i);
             ItemStack have = input.getItem(i);
-            if (have.isEmpty() || have.getItem() != need.getItem() || have.getCount() < need.getCount()) {
+            if (have.isEmpty() || have.typeHolder() != need.item() || have.getCount() < need.count()) {
                 return false;
             }
         }
@@ -97,10 +110,10 @@ public final class PythonRecipe implements Recipe<PythonRecipeInput> {
     public ItemStack assemble(PythonRecipeInput input) {
         for (Output output : outputs) {
             if (output.chance() >= 1.0f) {
-                return output.stack().copy();
+                return output.template().create();
             }
         }
-        return outputs.isEmpty() ? ItemStack.EMPTY : outputs.get(0).stack().copy();
+        return outputs.isEmpty() ? ItemStack.EMPTY : outputs.get(0).template().create();
     }
 
     @Override
@@ -123,10 +136,26 @@ public final class PythonRecipe implements Recipe<PythonRecipeInput> {
         return owner.type();
     }
 
-    /** 机器配方不参与原版合成台的摆放，直接标为不可摆放。 */
+    /**
+     * 摆放信息：由输入槽拼出真实 ingredients（对齐原版烹饪/切石机的做法）。
+     *
+     * <p><b>不能返回 {@link PlacementInfo#NOT_PLACEABLE}：</b>那会得到空的
+     * {@code slotsToIngredientIndex}，{@code isImpossibleToPlace()} 为真，于是
+     * {@code RecipeManager.unpackRecipeInfo} 会打
+     * {@code Recipe ... can't be placed due to empty ingredients and will be ignored}
+     * 并**直接跳过**该配方，配方进不了 ingredients / 属性集索引。
+     * 只有「无输入」的配方才按 NOT_PLACEABLE 处理。
+     */
     @Override
     public PlacementInfo placementInfo() {
-        return PlacementInfo.NOT_PLACEABLE;
+        if (inputs.isEmpty()) {
+            return PlacementInfo.NOT_PLACEABLE;
+        }
+        List<Ingredient> ingredients = new ArrayList<>(inputs.size());
+        for (ItemStackTemplate template : inputs) {
+            ingredients.add(Ingredient.of(template.item().value()));
+        }
+        return PlacementInfo.create(ingredients);
     }
 
     @Override

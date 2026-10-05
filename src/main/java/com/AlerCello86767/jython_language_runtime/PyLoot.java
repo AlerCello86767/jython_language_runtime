@@ -79,7 +79,15 @@ public final class PyLoot {
                 table.unwrapKey().map(key -> key.identifier().toString()).orElse(null), drops));
     }
 
-    /** 供 Python 构造掉落物：{@code PyLoot.stack("jython_language_runtime:ruby", 2)}。 */
+    /**
+     * 供 Python 构造掉落物：{@code PyLoot.stack("jython_language_runtime:ruby", 2)}。
+     *
+     * <p><b>只能在运行期调用</b>（战利品回调、机器产出、指令等）。注册期（{@code onInitialize}）
+     * 物品 holder 的组件还没绑定，构造 {@code ItemStack} 会抛
+     * {@code NullPointerException: Components not bound yet}——这是原版的加载顺序，
+     * 不是本运行时的限制。要在注册期描述「物品 + 数量」，请用注册门面的声明式参数（如
+     * {@code getDrops}、配方 JSON）。
+     */
     public static ItemStack stack(String itemId, int count) {
         return new ItemStack(item(itemId), count);
     }

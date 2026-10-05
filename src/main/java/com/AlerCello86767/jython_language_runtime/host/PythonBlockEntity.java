@@ -80,7 +80,7 @@ public class PythonBlockEntity extends BlockEntity {
         if (handles == null) {
             PyObject instance = behaviorClass.__call__();
             PyHandles created = new PyHandles(instance);
-            created.preload("tick", "saveAdditional", "loadAdditional", "use");
+            created.preload("tick", "saveAdditional", "loadAdditional", "use", "getData", "setData");
             behavior = instance;
             handles = created;
         }
@@ -93,6 +93,29 @@ public class PythonBlockEntity extends BlockEntity {
      */
     public SimpleContainer container() {
         return container;
+    }
+
+    /**
+     * 供菜单数据槽读取：转发 Python 的 {@code getData(index)}。没实现（或该方块无行为对象）返回 0。
+     *
+     * <p>典型用途是机器进度 / 能量这类要同步到界面的整数值——菜单每 tick 读一次，
+     * 因此走的是已缓存的句柄，不是 {@code __findattr__}。
+     */
+    public int getData(int index) {
+        PyHandles current = handlesOrNull();
+        if (current == null) {
+            return 0;
+        }
+        Integer value = current.forward("getData", Integer.class, index);
+        return value == null ? 0 : value;
+    }
+
+    /** 供菜单数据槽回写：转发 Python 的 {@code setData(index, value)}。 */
+    public void setData(int index, int value) {
+        PyHandles current = handlesOrNull();
+        if (current != null) {
+            current.call("setData", index, value);
+        }
     }
 
     /**

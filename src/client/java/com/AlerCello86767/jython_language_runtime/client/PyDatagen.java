@@ -15,6 +15,7 @@ import com.AlerCello86767.jython_language_runtime.client.datagen.PyDamageTypeGen
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyDamageTypeProvider;
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyEnchantmentGen;
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyEnchantmentProvider;
+import com.AlerCello86767.jython_language_runtime.client.datagen.PyFluidTagProvider;
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyItemTagProvider;
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyJsonProvider;
 import com.AlerCello86767.jython_language_runtime.client.datagen.PyJsonWriter;
@@ -45,6 +46,7 @@ import net.minecraft.resources.Identifier;
  *     PyDatagen.lootBlocks(pack, lambda t: t.dropSelf("mymod:machine_frame"))
  *     PyDatagen.blockModels(pack, lambda m: (m.cubeAll("mymod:machine_frame"), m.item("mymod:ruby")))
  *     PyDatagen.tags(pack, "block", "mineable/pickaxe", ["mymod:machine_frame"])
+ *     PyDatagen.tags(pack, "fluid", "water", ["mymod:test_liquid"])
  *     PyDatagen.json(pack, "enchantment", lambda out: out.write("mymod:smelting_touch", {...}))
  *     PyDatagen.damageTypes(pack, lambda d: d.define("mymod:overheat", {"exhaustion": 0.1}))
  *     PyDatagen.enchantments(pack, lambda e: e.define("mymod:smelting_touch", {"items": "#minecraft:enchantable/mining"}))
@@ -97,10 +99,14 @@ public final class PyDatagen {
     }
 
     /**
-     * 标签 provider：{@code tags(pack, "block"/"item", "mineable/pickaxe", [ids])}。
+     * 标签 provider：{@code tags(pack, "block"/"item"/"fluid", "mineable/pickaxe", [ids])}。
      *
-     * <p>标签名省略命名空间时默认 {@code minecraft}——挖掘/工具类标签必须落在 minecraft 命名空间
-     * 才会被原版识别；条目 id 省略命名空间时按当前模组补全。
+     * <p>标签名省略命名空间时默认 {@code minecraft}——挖掘/工具类标签、以及让流体算作水
+     * （{@code #minecraft:water}）这类原版判定，都必须落在 minecraft 命名空间才会被识别；
+     * 条目 id 省略命名空间时按当前模组补全。
+     *
+     * <p><b>标签是数据包驱动的</b>，运行期注册不了（Fabric 的 {@code fabric-tag-api-v1} 只提供
+     * 别名与移除）。所以流体标签也走这里产出的 {@code data/<ns>/tags/fluid/*.json}。
      */
     public static void tags(Object generator, String registry, String tag, List<String> values) {
         FabricDataGenerator dataGenerator = require(generator);
@@ -118,9 +124,13 @@ public final class PyDatagen {
             dataGenerator.createPack()
                     .addProvider((FabricDataGenerator.Pack.RegistryDependentFactory<PyItemTagProvider>)
                             (output, registries) -> new PyItemTagProvider(output, registries, tagId, ids));
+        } else if ("fluid".equals(registry)) {
+            dataGenerator.createPack()
+                    .addProvider((FabricDataGenerator.Pack.RegistryDependentFactory<PyFluidTagProvider>)
+                            (output, registries) -> new PyFluidTagProvider(output, registries, tagId, ids));
         } else {
             throw new IllegalArgumentException("Unsupported tag registry: " + registry
-                    + " (expected block/item)");
+                    + " (expected block/item/fluid)");
         }
         LOGGER.info("Registered datagen {} tag provider: {} <- {}", registry, tagId, ids);
     }

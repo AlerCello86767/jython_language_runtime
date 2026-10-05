@@ -136,7 +136,8 @@ public class PythonBlock extends Block implements EntityBlock {
         this.ticking = ticking;
         this.hasTick = behaviorClass != null && behaviorClass.__findattr__("tick") != null;
         this.hasHooks = behaviorClass != null
-                && PyHandles.implementsAny(behaviorClass, "tick", "saveAdditional", "loadAdditional", "use");
+                && PyHandles.implementsAny(behaviorClass, "tick", "saveAdditional", "loadAdditional", "use",
+                        "getData", "setData");
         this.sync = sync;
         this.containerSize = containerSize;
         this.hasBlockEntity = hasBlockEntity;

@@ -34,6 +34,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.ItemStackTemplate;
 import net.minecraft.world.item.crafting.RecipeHolder;
 import net.minecraft.world.item.crafting.RecipeManager;
 import net.minecraft.world.item.crafting.RecipeSerializer;
@@ -241,7 +242,8 @@ public final class PyRecipes {
         for (PythonRecipe.Output output : resolved.outputs()) {
             float chance = output.chance();
             if (chance >= 1.0f || random.nextFloat() < chance) {
-                produced.add(output.stack().copy());
+                // 模板每次 create 都是新栈，不必再 copy
+                produced.add(output.template().create());
             }
         }
 
@@ -376,17 +378,19 @@ public final class PyRecipes {
             Map<Item, List<RecipeHolder<PythonRecipe>>> byItem = new HashMap<>();
             List<RecipeHolder<PythonRecipe>> noInput = new ArrayList<>();
             for (RecipeHolder<PythonRecipe> holder : all) {
-                List<ItemStack> ins = holder.value().inputStacks();
+                List<ItemStackTemplate> ins = holder.value().inputs();
                 if (ins.isEmpty()) {
                     noInput.add(holder);
                     continue;
                 }
                 Set<Item> seen = new HashSet<>();
-                for (ItemStack stack : ins) {
-                    if (stack.isEmpty() || !seen.add(stack.getItem())) {
+                for (ItemStackTemplate template : ins) {
+                    // 模板构造时就排除了空气与 0 数量，这里只需去重
+                    Item item = template.item().value();
+                    if (!seen.add(item)) {
                         continue;
                     }
-                    byItem.computeIfAbsent(stack.getItem(), key -> new ArrayList<>()).add(holder);
+                    byItem.computeIfAbsent(item, key -> new ArrayList<>()).add(holder);
                 }
             }
             return new TypeCache(all, byItem, noInput);

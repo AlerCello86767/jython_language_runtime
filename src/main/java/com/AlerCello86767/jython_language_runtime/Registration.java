@@ -16,6 +16,10 @@ import com.AlerCello86767.jython_language_runtime.host.PythonBlock;
 import com.AlerCello86767.jython_language_runtime.host.PythonBlockEntity;
 import com.AlerCello86767.jython_language_runtime.host.PythonFacingBlock;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.mojang.serialization.JsonOps;
+
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -59,7 +63,6 @@ import net.minecraft.world.item.CreativeModeTab;
 import net.minecraft.world.item.CreativeModeTabs;
 import net.minecraft.world.item.DyeColor;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.ItemUseAnimation;
 import net.minecraft.world.item.Rarity;
 import net.minecraft.world.item.ToolMaterial;
@@ -817,23 +820,46 @@ public final class Registration {
         return List.of(BlockPredicate.Builder.block().of(BuiltInRegistries.BLOCK, blocks).build());
     }
 
-    /** 容器内容 / 旗帜图案 / 染色 / 地图 id / 修理成本。 */
+    /**
+     * 容器内容 / 旗帜图案 / 染色 / 地图 id / 修理成本。
+     *
+     * <p><b>{@code container} 为什么要绕一层 JSON：</b>
+     * {@code ItemContainerContents.fromItems(List<ItemStack>)} 需要真的 {@code ItemStack}，而注册期
+     * 物品 holder 的组件还没绑定（绑定发生在之后单独调用的
+     * {@code ReloadableServerResources.updateComponentsAndStaticRegistryTags()}），
+     * {@code new ItemStack(...)} 会抛 {@code NullPointerException: Components not bound yet}。
+     * 而 {@code ItemContainerContents} 内部存的就是 {@code ItemStackTemplate}，它的 {@code CODEC}
+     * 解码全程不碰组件——所以这里按原版数据包格式组 JSON 再走 codec，注册期即可用。
+     */
     private static void applySpecialContent(Item.Properties properties, Map<String, Object> options) {
         List<?> container = asList(options.get("container"));
         if (container != null && !container.isEmpty()) {
-            List<ItemStack> stacks = new ArrayList<>();
+            JsonArray slots = new JsonArray();
+            int index = 0;
             for (Object raw : container) {
                 Map<String, Object> entry = asMap(raw);
                 if (entry == null) {
                     throw new IllegalArgumentException("container entries must be maps");
                 }
-                String itemId = asString(entry.get("item"), null);
-                if (itemId == null) {
+                String rawItem = asString(entry.get("item"), null);
+                if (rawItem == null) {
                     throw new IllegalArgumentException("container entry requires 'item'");
                 }
-                stacks.add(new ItemStack(resolveItem(itemId), asInt(entry.get("count"), 1)));
+                resolveItem(rawItem); // 借用同一套「未注册」报错
+                int count = asInt(entry.get("count"), 1);
+                if (count < 1 || count > 99) {
+                    throw new IllegalArgumentException("container 物品数量必须在 1..99，收到: " + count);
+                }
+                JsonObject item = new JsonObject();
+                item.addProperty("id", parseId(rawItem).toString());
+                item.addProperty("count", count);
+                JsonObject slot = new JsonObject();
+                slot.addProperty("slot", index++);
+                slot.add("item", item);
+                slots.add(slot);
             }
-            properties.component(DataComponents.CONTAINER, ItemContainerContents.fromItems(stacks));
+            properties.component(DataComponents.CONTAINER,
+                    ItemContainerContents.CODEC.parse(JsonOps.INSTANCE, slots).getOrThrow());
         }
 
         List<?> bannerPatterns = asList(options.get("bannerPatterns"));
